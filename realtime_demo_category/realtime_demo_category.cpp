@@ -497,6 +497,7 @@ int main(int argc, char * argv[])
 
 		projection_img = Mat(projector_resolution[1], projector_resolution[0], CV_8UC3, Scalar(brightness, brightness, brightness));
 
+//gitnoïœçXämÇ©ÇﬂÇÈ
 		/*
 		vector<int> key_vec;
 		vector<Point2f> center_vec;
