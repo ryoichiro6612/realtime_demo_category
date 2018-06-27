@@ -1,0 +1,41 @@
+usage: realtime_demo_category_mp.exe outer_size fps
+1944
+2592
+progress  0:0
+camera capture:640ms
+desk_area extract:0ms
+capture:640ms
+recognition コピー:16ms
+recognition グレイイメージ:0ms
+recognition 2値化:47ms
+recognition Contours:31ms
+recognition 位置マーカ探索:312ms
+位置マーカ数:253
+recognition 付箋領域抽出:32ms
+recognition:438ms
+id recognition:31ms
+add_information:16ms
+all :1125ms
+progress  0:1
+camera capture:265ms
+desk_area extract:0ms
+capture:265ms
+recognition コピー:16ms
+recognition グレイイメージ:0ms
+recognition 2値化:94ms
+recognition Contours:15ms
+recognition 位置マーカ探索:281ms
+位置マーカ数:252
+recognition 付箋領域抽出:47ms
+recognition:453ms
+id recognition:16ms
+add_information:31ms
+all :765ms
+progress  0:2
+camera capture:250ms
+desk_area extract:0ms
+capture:250ms
+recognition コピー:0ms
+recognition グレイイメージ:0ms
+recognition 2値化:63ms
+recognition Contours:15ms

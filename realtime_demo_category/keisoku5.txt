@@ -1,0 +1,227 @@
+usage: realtime_demo_category.exe outer_size fps
+1944
+2592
+progress  0:0
+camera capture:641ms
+desk_area extract:0ms
+capture:641ms
+recognition コピー:188ms
+recognition グレイイメージ:0ms
+recognition 2値化:78ms
+recognition Contours:31ms
+recognition 位置マーカ探索:656ms
+位置マーカ数:112
+recognition 付箋領域抽出:47ms
+recognition:1000ms
+Decoded  BitArray:[65, 169, 55, 163, 22, 102, 185, 313, 202, 329, 457, 84, 108, 242, 12, ]
+65
+Decoded  BitArray:[139, 49, 245, 158, 96, 123, 52, 28, 403, 263, 303, 343, 212, 16, 202, ]
+139
+Decoded  BitArray:[87, 109, 196, 225, 139, 151, 105, 329, 188, 341, 373, 277, 283, 178, 259, ]
+87
+Decoded  BitArray:[134, 119, 182, 142, 41, 78, 9, 222, 203, 441, 110, 10, 183, 118, 174, ]
+134
+Decoded  BitArray:[157, 245, 6, 220, 253, 138, 228, 108, 485, 283, 403, 22, 419, 80, 453, ]
+157
+id recognition:31ms
+add_information:16ms
+all :1688ms
+progress  0:1
+camera capture:0ms
+desk_area extract:0ms
+capture:0ms
+recognition コピー:234ms
+recognition グレイイメージ:0ms
+recognition 2値化:78ms
+recognition Contours:16ms
+recognition 位置マーカ探索:656ms
+位置マーカ数:121
+recognition 付箋領域抽出:47ms
+recognition:1031ms
+Decoded  BitArray:[157, 245, 6, 220, 253, 138, 228, 108, 229, 283, 403, 22, 163, 80, 453, ]
+157
+Decoded  BitArray:[65, 169, 55, 163, 22, 102, 185, 313, 202, 329, 457, 84, 108, 242, 12, ]
+65
+Decoded  BitArray:[139, 49, 245, 158, 96, 123, 52, 28, 403, 263, 303, 343, 212, 16, 458, ]
+139
+Decoded  BitArray:[255, 109, 237, 225, 159, 151, 255, 100, 100, 341, 373, 100, 100, 178, 100, ]
+255
+id recognition:16ms
+add_information:15ms
+all :1062ms
+progress  0:2
+camera capture:0ms
+desk_area extract:0ms
+capture:0ms
+recognition コピー:219ms
+recognition グレイイメージ:0ms
+recognition 2値化:78ms
+recognition Contours:16ms
+recognition 位置マーカ探索:656ms
+位置マーカ数:120
+recognition 付箋領域抽出:63ms
+recognition:1032ms
+Decoded  BitArray:[157, 245, 6, 220, 253, 138, 228, 108, 229, 283, 403, 22, 163, 80, 453, ]
+157
+Decoded  BitArray:[65, 169, 55, 163, 22, 102, 185, 313, 202, 329, 457, 84, 108, 242, 12, ]
+65
+Decoded  BitArray:[139, 49, 245, 158, 96, 123, 52, 28, 403, 263, 303, 343, 212, 16, 458, ]
+139
+Decoded  BitArray:[255, 109, 237, 225, 223, 151, 255, 100, 0, 341, 100, 100, 100, 178, 259, ]
+255
+id recognition:31ms
+add_information:31ms
+all :1094ms
+progress  0:3
+camera capture:0ms
+desk_area extract:0ms
+capture:0ms
+recognition コピー:203ms
+recognition グレイイメージ:0ms
+recognition 2値化:63ms
+recognition Contours:15ms
+recognition 位置マーカ探索:641ms
+位置マーカ数:118
+recognition 付箋領域抽出:47ms
+recognition:969ms
+Decoded  BitArray:[157, 245, 6, 220, 253, 138, 228, 108, 229, 283, 403, 22, 163, 80, 453, ]
+157
+Decoded  BitArray:[65, 169, 55, 163, 22, 102, 185, 313, 202, 329, 457, 84, 108, 498, 12, ]
+65
+Decoded  BitArray:[139, 49, 245, 158, 96, 123, 52, 28, 403, 263, 303, 343, 212, 16, 458, ]
+139
+id recognition:16ms
+add_information:15ms
+all :1000ms
+progress  0:4
+camera capture:0ms
+desk_area extract:0ms
+capture:0ms
+recognition コピー:188ms
+recognition グレイイメージ:0ms
+recognition 2値化:78ms
+recognition Contours:0ms
+recognition 位置マーカ探索:719ms
+位置マーカ数:126
+recognition 付箋領域抽出:46ms
+recognition:1031ms
+Decoded  BitArray:[157, 245, 6, 220, 253, 138, 228, 108, 229, 283, 403, 22, 163, 80, 453, ]
+157
+Decoded  BitArray:[65, 169, 55, 163, 22, 102, 185, 313, 202, 329, 457, 340, 108, 242, 12, ]
+65
+Decoded  BitArray:[139, 49, 245, 158, 96, 123, 52, 28, 403, 263, 303, 343, 468, 16, 202, ]
+139
+Decoded  BitArray:[255, 109, 239, 225, 223, 151, 255, 100, 0, 375, 100, 100, 100, 246, 100, ]
+255
+id recognition:16ms
+add_information:16ms
+all :1063ms
+progress  0:5
+camera capture:0ms
+desk_area extract:0ms
+capture:0ms
+recognition コピー:172ms
+recognition グレイイメージ:0ms
+recognition 2値化:46ms
+recognition Contours:16ms
+recognition 位置マーカ探索:703ms
+位置マーカ数:121
+recognition 付箋領域抽出:47ms
+recognition:984ms
+Decoded  BitArray:[157, 245, 6, 220, 253, 138, 228, 108, 229, 283, 403, 22, 163, 80, 453, ]
+157
+Decoded  BitArray:[193, 169, 63, 231, 30, 102, 249, 315, 202, 329, 457, 92, 100, 242, 12, ]
+193
+Decoded  BitArray:[143, 51, 247, 159, 96, 255, 52, 28, 403, 263, 383, 343, 100, 16, 463, ]
+143
+Error - Critical decoding failure!
+id recognition:31ms
+add_information:16ms
+all :1031ms
+progress  0:6
+camera capture:0ms
+desk_area extract:0ms
+capture:0ms
+recognition コピー:187ms
+recognition グレイイメージ:0ms
+recognition 2値化:47ms
+recognition Contours:16ms
+recognition 位置マーカ探索:641ms
+位置マーカ数:121
+recognition 付箋領域抽出:46ms
+recognition:937ms
+Decoded  BitArray:[157, 245, 6, 220, 253, 138, 228, 108, 229, 283, 403, 22, 163, 80, 453, ]
+157
+Decoded  BitArray:[65, 169, 55, 163, 22, 102, 185, 313, 202, 329, 457, 84, 108, 242, 12, ]
+65
+Decoded  BitArray:[139, 49, 245, 158, 96, 123, 52, 28, 403, 263, 303, 343, 212, 16, 202, ]
+139
+id recognition:0ms
+add_information:32ms
+all :969ms
+progress  0:7
+camera capture:0ms
+desk_area extract:0ms
+capture:0ms
+recognition コピー:187ms
+recognition グレイイメージ:0ms
+recognition 2値化:47ms
+recognition Contours:16ms
+recognition 位置マーカ探索:656ms
+位置マーカ数:123
+recognition 付箋領域抽出:47ms
+recognition:953ms
+Decoded  BitArray:[157, 245, 6, 220, 253, 138, 228, 108, 229, 283, 403, 22, 163, 80, 453, ]
+157
+Decoded  BitArray:[65, 169, 55, 163, 22, 102, 185, 313, 202, 329, 457, 84, 108, 242, 12, ]
+65
+Decoded  BitArray:[139, 49, 245, 158, 96, 123, 52, 28, 403, 263, 303, 343, 212, 16, 202, ]
+139
+id recognition:0ms
+add_information:31ms
+all :984ms
+progress  0:8
+camera capture:0ms
+desk_area extract:0ms
+capture:0ms
+recognition コピー:188ms
+recognition グレイイメージ:0ms
+recognition 2値化:46ms
+recognition Contours:16ms
+recognition 位置マーカ探索:672ms
+位置マーカ数:120
+recognition 付箋領域抽出:47ms
+recognition:969ms
+Decoded  BitArray:[157, 245, 6, 220, 253, 138, 228, 108, 229, 283, 403, 22, 163, 80, 453, ]
+157
+Decoded  BitArray:[195, 185, 63, 163, 30, 102, 185, 315, 202, 329, 457, 100, 100, 499, 12, ]
+195
+Decoded  BitArray:[139, 49, 245, 158, 96, 123, 52, 28, 403, 263, 303, 343, 212, 16, 458, ]
+139
+id recognition:15ms
+add_information:32ms
+all :1016ms
+progress  0:9
+camera capture:0ms
+desk_area extract:0ms
+capture:0ms
+recognition コピー:203ms
+recognition グレイイメージ:0ms
+recognition 2値化:62ms
+recognition Contours:16ms
+recognition 位置マーカ探索:656ms
+位置マーカ数:121
+recognition 付箋領域抽出:63ms
+recognition:1000ms
+Decoded  BitArray:[157, 245, 6, 220, 253, 138, 228, 108, 229, 283, 403, 22, 163, 80, 453, ]
+157
+Decoded  BitArray:[65, 169, 55, 163, 22, 102, 185, 313, 202, 329, 457, 84, 108, 242, 12, ]
+65
+Decoded  BitArray:[139, 49, 245, 158, 96, 123, 52, 28, 403, 263, 303, 343, 212, 16, 458, ]
+139
+Decoded  BitArray:[255, 111, 239, 225, 223, 151, 255, 100, 0, 343, 100, 100, 0, 178, 511, ]
+255
+id recognition:15ms
+add_information:16ms
+all :1031ms
+progress  0:10

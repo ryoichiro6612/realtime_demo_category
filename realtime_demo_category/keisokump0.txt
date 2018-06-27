@@ -1,0 +1,154 @@
+usage: realtime_demo_category.exe outer_size fps
+1944
+2592
+progress  0:0
+camera capture:641ms
+desk_area extract:0ms
+capture:641ms
+recognition コピー:265ms
+recognition グレイイメージ:16ms
+recognition 2値化:78ms
+recognition Contours:47ms
+recognition 位置マーカ探索:172ms
+位置マーカ数:27
+recognition 付箋領域抽出:15ms
+recognition:593ms
+id recognition:0ms
+add_information:16ms
+all :1250ms
+progress  0:1
+camera capture:109ms
+desk_area extract:0ms
+capture:109ms
+recognition コピー:266ms
+recognition グレイイメージ:0ms
+recognition 2値化:78ms
+recognition Contours:16ms
+recognition 位置マーカ探索:47ms
+位置マーカ数:16
+recognition 付箋領域抽出:31ms
+recognition:438ms
+id recognition:0ms
+add_information:31ms
+all :578ms
+progress  0:2
+camera capture:250ms
+desk_area extract:0ms
+capture:250ms
+recognition コピー:266ms
+recognition グレイイメージ:0ms
+recognition 2値化:78ms
+recognition Contours:15ms
+recognition 位置マーカ探索:32ms
+位置マーカ数:16
+recognition 付箋領域抽出:31ms
+recognition:422ms
+id recognition:0ms
+add_information:16ms
+all :688ms
+progress  0:3
+camera capture:312ms
+desk_area extract:0ms
+capture:312ms
+recognition コピー:266ms
+recognition グレイイメージ:0ms
+recognition 2値化:78ms
+recognition Contours:15ms
+recognition 位置マーカ探索:32ms
+位置マーカ数:16
+recognition 付箋領域抽出:31ms
+recognition:422ms
+id recognition:0ms
+add_information:16ms
+all :750ms
+progress  0:4
+camera capture:296ms
+desk_area extract:0ms
+capture:296ms
+recognition コピー:266ms
+recognition グレイイメージ:0ms
+recognition 2値化:94ms
+recognition Contours:15ms
+recognition 位置マーカ探索:16ms
+位置マーカ数:14
+recognition 付箋領域抽出:31ms
+recognition:422ms
+id recognition:0ms
+add_information:32ms
+all :750ms
+progress  0:5
+camera capture:281ms
+desk_area extract:0ms
+capture:281ms
+recognition コピー:265ms
+recognition グレイイメージ:0ms
+recognition 2値化:79ms
+recognition Contours:15ms
+recognition 位置マーカ探索:31ms
+位置マーカ数:14
+recognition 付箋領域抽出:32ms
+recognition:422ms
+id recognition:0ms
+add_information:15ms
+all :718ms
+progress  0:6
+camera capture:297ms
+desk_area extract:0ms
+capture:297ms
+recognition コピー:266ms
+recognition グレイイメージ:0ms
+recognition 2値化:78ms
+recognition Contours:16ms
+recognition 位置マーカ探索:15ms
+位置マーカ数:17
+recognition 付箋領域抽出:31ms
+recognition:406ms
+id recognition:0ms
+add_information:16ms
+all :719ms
+progress  0:7
+camera capture:313ms
+desk_area extract:0ms
+capture:313ms
+recognition コピー:250ms
+recognition グレイイメージ:0ms
+recognition 2値化:78ms
+recognition Contours:15ms
+recognition 位置マーカ探索:47ms
+位置マーカ数:20
+recognition 付箋領域抽出:31ms
+recognition:421ms
+id recognition:0ms
+add_information:16ms
+all :750ms
+progress  0:8
+camera capture:281ms
+desk_area extract:0ms
+capture:281ms
+recognition コピー:250ms
+recognition グレイイメージ:0ms
+recognition 2値化:78ms
+recognition Contours:16ms
+recognition 位置マーカ探索:31ms
+位置マーカ数:14
+recognition 付箋領域抽出:32ms
+recognition:407ms
+id recognition:0ms
+add_information:31ms
+all :719ms
+progress  0:9
+camera capture:312ms
+desk_area extract:0ms
+capture:312ms
+recognition コピー:235ms
+recognition グレイイメージ:0ms
+recognition 2値化:62ms
+recognition Contours:16ms
+recognition 位置マーカ探索:47ms
+位置マーカ数:15
+recognition 付箋領域抽出:31ms
+recognition:391ms
+id recognition:0ms
+add_information:31ms
+all :734ms
+progress  0:10
