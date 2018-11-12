@@ -147,8 +147,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="post_util.h" />
+    <ClInclude Include="realtime_demo_category.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="zikken_state.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="post_util.cpp" />

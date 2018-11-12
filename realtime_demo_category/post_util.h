@@ -6,7 +6,6 @@
 #include <time.h>
 #include <omp.h>
 
-
 using namespace std;
 using namespace cv;
 
@@ -34,7 +33,9 @@ typedef struct postit_info {
 
 } PostitInfo;
 
-void getPostits(Postits *, cv::Mat, int);
+void Timer(LARGE_INTEGER &, string label);
+
+void getPostits(Postits * postits, cv::Mat frame, int outer_size);
 vector<int> readDots(Mat, int);
 Point2f max2f(Point2f*, int, int);
 Point max2i(Point*, int, int);

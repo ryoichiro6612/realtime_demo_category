@@ -32,6 +32,15 @@ using namespace cv;
 #include "postit_config.h"	
 
 #include "post_util.h"
+#include "realtime_demo_category.h"
+#include "zikken_state.h"
+
+bool iti_heiretu;
+bool id_heiretu;
+bool use_gpu;
+bool camera_heiretu;
+std::ofstream zikken_output;
+LARGE_INTEGER freq;
 
 double dist_thre = DIST_THRE;
 double angle_thre = ANGLE_THRE;
@@ -188,27 +197,38 @@ void cameraCapture(Mat &frame) {
 		cap >> frame;
 	}
 }
-
-int main(int argc, char * argv[])
-{
-	//*/
-	if (sizeof(argv) / sizeof(argv[0]) != 3) {
-		cout << "usage: " << argv[0] << " outer_size fps\n";
+void testCamera(VideoCapture &cap) {
+	VideoWriter writer(".\datas\zikken.wmv", CV_FOURCC('M', 'J', 'P', 'G'), 15.0, Size(2592, 1944));
+	Mat frame;
+	cv::namedWindow("test");
+	int count = 0;
+	while (1) {
+		LARGE_INTEGER timer1, timer2;
+		QueryPerformanceCounter(&timer1);
+		cap >> frame;
+		QueryPerformanceCounter(&timer2);
+		cout << "capture:" << double(timer2.QuadPart - timer1.QuadPart)*1000.0 / freq.QuadPart << "ms" << endl;
+		imshow("test", frame);
+		if (count >= 10) {
+			writer << frame;
+		}
+		count++;
+		waitKey(66);
+		if (count >= NTEST + 10)break;
 	}
-	//int outer_size = atoi(argv[1]);
-	//int fps = atoi(argv[2]);
+}
+
+void realtimeDemoCategory(int argc, char * argv[]) {
 	int outer_size = 350;
 	int fps = 1;
 	bool skipmode = true;
-
-
 
 	// real time parameters
 	int newest_key_saved = -1;
 	int projector_resolution[2] = { 1280, 765 };
 
 
-	cv::Mat frame,cameraFrame;
+	cv::Mat frame, cameraFrame;
 	if (kakunin) {
 		namedWindow("frame", CV_WINDOW_AUTOSIZE);
 	}
@@ -216,33 +236,25 @@ int main(int argc, char * argv[])
 
 	//*usb camera use
 	//video reader and writer
-	cv::VideoCapture cap(0);
-	cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
-	cap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
+	cv::VideoCapture cap("zikken.wmv");
+	//cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
+	//cap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
 	cap >> frame;
 
-	/*cv::namedWindow("test");
-	while (1) {
-		DWORD timer1 = GetTickCount();
-		cap >> frame;
-		DWORD timer2 = GetTickCount();
-		cout << "capture:" << timer2- timer1 << "ms" << endl;
-		imshow("test", frame);
-		waitKey(2000);
-	}*/
 
 	cout << frame.rows << endl;
 	cout << frame.cols << endl;
 
 	int frame_size_0 = frame.rows;
 	int frame_size_1 = frame.cols;
+
+	//testCamera(cap);
+
 	//*/
 	//projection area out
 	int brightness = 100;
 	Mat projection_img(projector_resolution[1], projector_resolution[0], CV_8UC3, Scalar(brightness, brightness, brightness));
 	cv::namedWindow("projection");
-	cv::imshow("projection", projection_img);
-	cv::waitKey(1);
 
 	//*first select desk area
 	vector<Point2f> desk_area;
@@ -277,8 +289,287 @@ int main(int argc, char * argv[])
 		postit_saved[mi].naruhodo = 0;
 	}
 
-	int timer_table[10][10];
+	//kokokara loop
+	int timer_count = 0;
 
+	int newest_key = -1;
+	int newest_time = -1;
+
+	while (1) {
+		zikken_output << "progress  " << std::to_string(int(timer_count / fps) / 60) << ":" << std::to_string((timer_count / fps) % 60) << "\n";
+		LARGE_INTEGER prev_timer;
+
+		if (timer_count == NTEST) {
+			//break;
+		}
+		//*usb camera capture frame
+		QueryPerformanceCounter(&prev_timer);
+		cap >> frame;
+		if (!frame.cols) {
+			break;
+		}
+		Timer(prev_timer, string("camera capture"));
+		//extract only desk_area
+		Mat frame_deskarea(frame, Rect((int)desk_area[0].x, (int)desk_area[0].y,
+			(int)((desk_area[1] - desk_area[0]).x), (int)(desk_area[1] - desk_area[0]).y));
+
+		Timer(prev_timer, "desk_area extract");
+
+		Postits postits;
+		getPostits(&postits, frame_deskarea, outer_size);
+		Timer(prev_timer, "recognition");
+		vector<vector<Point2f>
+		> postit_points = postits.postit_points;
+		//add buffer
+		int i, j;
+		for (i = 0; i < postit_points.size(); i++) {
+			for (j = 0; j < postit_points[i].size(); j++) {
+				postit_points[i][j] += desk_area[0];
+			}
+		}
+
+		//read postit's id and save
+		vector<int> postit_ids;
+
+		for (i = 0; i < postit_points.size(); i++) {
+			Mat postit_image_analyzing = postits.postit_image_analyzing[i];
+			vector<int> bit_array = readDots(postit_image_analyzing, outer_size);
+			int result_num = -1;
+			result_num = reedsolomonDecode(bit_array);
+			postit_ids.push_back(result_num);
+		}
+		
+		Timer(prev_timer, "id recognition");
+		for (i = 0; i < postit_ids.size(); i++) {
+			int result_num = postit_ids[i];
+			//save postit image
+			if (result_num > 0) {
+				if (kakunin) {
+					cout << result_num << endl;
+				}
+				// already exist
+				if (postit_saved[result_num].has_key) {
+					//renew
+					postit_saved[result_num].show = true;
+					postit_saved[result_num].points = postit_points[i];
+					postit_saved[result_num].points_saved = postit_points[i];
+					postit_saved[result_num].last_time = timer_count / fps;
+				}
+				else {
+					postit_saved[result_num].has_key = true;
+					postit_saved[result_num].show = true;
+					postit_saved[result_num].points = postit_points[i];
+					postit_saved[result_num].points_saved = postit_points[i];
+					//postit_saved[result_num].naruhodo = 0;
+					postit_saved[result_num].last_time = timer_count / fps;
+					time(&postit_saved[result_num].first_time);
+				}
+			}
+		}
+		for (i = 0; i < postit_saved.size(); i++) {
+			PostitInfo val = postit_saved[i];
+			if (postit_saved[i].show) {
+				if ((timer_count / fps - val.last_time) > time_thre) {
+					postit_saved[i].points[0] = Point2f(-5, 0);
+					postit_saved[i].points[1] = Point2f(0, 0);
+					postit_saved[i].points[2] = Point2f(0, -5);
+					postit_saved[i].points[3] = Point2f(-5, -5);
+					postit_saved[i].show = false;
+				}
+			}
+		}
+
+		int key;
+		int brightness = 50;
+		float down_scale_x = 1.0 * float(projector_resolution[0]) / (desk_area[1].x - desk_area[0].x);
+		float down_scale_y = 1.0 * float(projector_resolution[1]) / (desk_area[1].y - desk_area[0].y);
+		int x_buffer = 0;
+		int y_buffer = 0;
+
+		//* husen clustering
+		vector <vector<Point>> husen_points;
+		vector<int> vec_id;
+		for (key = 0; key < postit_saved.size(); key++) {
+			if (postit_saved[key].show) {
+				vec_id.push_back(key);
+				vector<Point> Points;
+				int i;
+				for (i = 0; i < postit_saved[key].points.size(); i++) {
+					Points.push_back(Point((int)postit_saved[key].points[i].x, (int)postit_saved[key].points[i].y));
+				}
+				husen_points.push_back(Points);
+			}
+		}
+		vector<vector<int>>C = dbscan_fusen(husen_points, 80);
+
+		for (i = 0; i < C.size(); i++) {
+			for (j = 0; j < C[i].size(); j++) {
+				if (vec_id.size() != 0) {
+					int key = vec_id[C[i][j]];
+					postit_saved[key].cluster_num = i;
+				}
+
+			}
+		}
+
+		//draw information
+		projection_img = Mat(projector_resolution[1], projector_resolution[0], CV_8UC3, Scalar(brightness, brightness, brightness));
+		for (key = 0; key < postit_saved.size(); key++) {
+
+			if (postit_saved[key].show == true) {
+				//cout << key << endl;
+				vector<Point> caliblated_points(4);
+				int i;
+				for (i = 0; i < 4; i++) {
+					vector<Point2f> before_points{ Point2f((float)desk_area[0].x,(float)desk_area[0].y), Point2f((float)desk_area[2].x,(float)desk_area[2].y),
+						Point2f((float)desk_area[1].x,(float)desk_area[1].y), Point2f((float)desk_area[3].x,(float)desk_area[3].y) };
+					vector<Point2f> after_points{ Point2f(0,0), Point2f(projector_resolution[0], 0),
+						Point2f(projector_resolution[0],projector_resolution[1]), Point2f(0, projector_resolution[1]) };
+					Mat M = cv::getPerspectiveTransform(before_points, after_points);
+					Point2f each_point = postit_saved[key].points[i];
+					cv::Mat eachpoint_3d = (cv::Mat_<double>(3, 1) << (double)each_point.x, (double)each_point.y, 1);
+					cv::Mat caliblatedPoint_3d(3, 1, CV_64FC1);
+					caliblatedPoint_3d = M * eachpoint_3d;
+					caliblated_points[i] = Point(projector_resolution[0] - (int)caliblatedPoint_3d.at<double>(0, 0), projector_resolution[1] - (int)caliblatedPoint_3d.at<double>(1, 0));
+					/*
+					caliblated_points[i] = Point((int)((each_point.x - desk_area[0].x)*down_scale_x) - x_buffer,
+					(int)((each_point.y - desk_area[0].y)*down_scale_y) - y_buffer);
+					//*/
+				}
+
+				float buff_ratio = 0.0;
+				caliblated_points[0] += ((caliblated_points[1] - caliblated_points[2]) +
+					(caliblated_points[3] - caliblated_points[2])) * buff_ratio;
+				caliblated_points[1] += ((caliblated_points[0] - caliblated_points[3]) + (
+					caliblated_points[2] - caliblated_points[3])) * buff_ratio;
+				caliblated_points[2] += ((caliblated_points[1] - caliblated_points[0]) + (
+					caliblated_points[3] - caliblated_points[0])) * buff_ratio;
+				caliblated_points[3] += ((caliblated_points[0] - caliblated_points[1]) + (
+					caliblated_points[2] - caliblated_points[1])) * buff_ratio;
+
+
+				Point2f center_point = mean2i(&caliblated_points[0], 4, 0);
+
+				//*
+				cv::putText(projection_img, to_string(key),
+					Point(int(center_point.x - 60), int(center_point.y - 20) + 0),
+					CV_FONT_HERSHEY_PLAIN, 2.5, Color[postit_saved[key].cluster_num], 5);
+
+
+
+				time_t d = postit_saved[key].first_time;
+				struct tm t_st;
+				localtime_s(&t_st, &d);
+			}
+		}
+		imshow("projection", projection_img);
+		int c;
+		c = cv::waitKey(1);
+		if (c == 27) {
+			break;
+		}
+
+		Timer(prev_timer, "add information");
+		timer_count++;
+	}
+}
+int main(int argc, char * argv[])
+{
+	/*cv::VideoCapture testcap(0);
+	testcap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
+	testcap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
+	testCamera(testcap);
+	return 0;*/
+	iti_heiretu = false;
+	id_heiretu = false;
+	use_gpu = false;
+	camera_heiretu = false;
+	string fname = string("./datas/csv/tyoku") + string(argv[1]) + ".log";
+	zikken_output = ofstream(fname);
+	QueryPerformanceFrequency(&freq);
+	realtimeDemoCategory(argc, argv);
+	iti_heiretu = true;
+	fname = string("./datas/csv/hei") + string(argv[1]) + ".log";
+	zikken_output = ofstream(fname);
+	realtimeDemoCategory(argc, argv);
+	return 0;
+	//*/
+	if (sizeof(argv) / sizeof(argv[0]) != 3) {
+		cout << "usage: " << argv[0] << " outer_size fps\n";
+	}
+	//int outer_size = atoi(argv[1]);
+	//int fps = atoi(argv[2]);
+	int outer_size = 350;
+	int fps = 1;
+	bool skipmode = true;
+
+
+
+	// real time parameters
+	int newest_key_saved = -1;
+	int projector_resolution[2] = {1280, 765};
+
+
+	cv::Mat frame, cameraFrame;
+	if (kakunin) {
+		namedWindow("frame", CV_WINDOW_AUTOSIZE);
+	}
+	namedWindow("projection", CV_WINDOW_AUTOSIZE);
+
+	//*usb camera use
+	//video reader and writer
+	cv::VideoCapture cap(0);
+	cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
+	cap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
+	cap >> frame;
+
+
+	cout << frame.rows << endl;
+	cout << frame.cols << endl;
+
+	int frame_size_0 = frame.rows;
+	int frame_size_1 = frame.cols;
+
+	//testCamera(cap);
+
+	//*/
+	//projection area out
+	int brightness = 100;
+	Mat projection_img(projector_resolution[1], projector_resolution[0], CV_8UC3, Scalar(brightness, brightness, brightness));
+	cv::namedWindow("projection");
+
+	//*first select desk area
+	vector<Point2f> desk_area;
+	cv::namedWindow("SELECT DESK", CV_WINDOW_AUTOSIZE);
+	cv::setMouseCallback("SELECT DESK", mouse_callback, &desk_area);
+	desk_area.push_back(Point2f(0.0, 0.0));
+	desk_area.push_back(Point2f(float(frame.cols), float(frame.rows)));
+	desk_area.push_back(Point2f(float(frame.cols), 0));
+	desk_area.push_back(Point2f(0, float(frame.rows)));
+	/*while (1) {
+		cap >> frame;
+		Mat frame_for_select(int(frame.rows * 0.2), int(frame.cols * 0.2), frame.type());
+		cv::resize(frame, frame_for_select, frame_for_select.size());
+		cv::imshow("SELECT DESK", frame_for_select);
+		char c = cv::waitKey(30);
+		if (c >= 0) {
+			break;
+		}
+	}
+	int i;
+	for (i = 0; i < desk_area.size(); i++) {
+		desk_area[i] *= 5;
+	}*/
+
+
+
+	int mi;
+	vector<PostitInfo> postit_saved(256);
+	for (mi = 0; mi < postit_saved.size(); mi++) {
+		postit_saved[mi].has_key = false;
+		postit_saved[mi].show = false;
+		postit_saved[mi].naruhodo = 0;
+	}
 
 	//kokokara loop
 	int timer_count = 0;
@@ -296,15 +587,14 @@ int main(int argc, char * argv[])
 	while (1) {
 		cout << "progress  " << std::to_string(int(timer_count / fps) / 60) << ":" << std::to_string((timer_count / fps) % 60) << "\n";
 		DWORD now_timer, prev_timer;
-		if (timer_count == 10) {
-			//break;
-		}
+
+
 		//*usb camera capture frame
-		DWORD timer_start = GetTickCount();
+		DWORD timer_start = timeGetTime();
 		mtx_camera.lock();
 		cameraFrame.copyTo(frame);
 		mtx_camera.unlock();
-		DWORD timer_temp = GetTickCount();
+		DWORD timer_temp = timeGetTime();
 		prev_timer = timer_temp;
 		
 		cout << "camera capture:" << timer_temp - timer_start << "ms" << endl;
@@ -313,7 +603,7 @@ int main(int argc, char * argv[])
 		Mat frame_deskarea(frame, Rect((int)desk_area[0].x, (int)desk_area[0].y,
 			(int)((desk_area[1] - desk_area[0]).x), (int)(desk_area[1] - desk_area[0]).y));
 
-		now_timer = GetTickCount();
+		now_timer = timeGetTime();
 		
 		cout << "desk_area extract:" << now_timer - prev_timer << "ms" << endl;
 		prev_timer = now_timer;
@@ -321,7 +611,7 @@ int main(int argc, char * argv[])
 		
 		Postits postits;
 		getPostits(&postits, frame_deskarea, outer_size);
-		now_timer = GetTickCount();
+		now_timer = timeGetTime();
 		cout << "recognition:" << now_timer - prev_timer << "ms" << endl;
 		prev_timer = now_timer;
 		vector<vector<Point2f>
@@ -398,7 +688,7 @@ int main(int argc, char * argv[])
 				}
 			}
 		}
-		now_timer = GetTickCount();
+		now_timer = timeGetTime();
 		cout << "id recognition:" << now_timer - prev_timer << "ms" << endl;
 		prev_timer = now_timer;
 		for (i = 0; i < postit_saved.size(); i++) {
@@ -807,7 +1097,7 @@ int main(int argc, char * argv[])
 			break;
 		}
 
-		now_timer = GetTickCount();
+		now_timer = timeGetTime();
 		cout << "add_information:" << now_timer - prev_timer << "ms" << endl;
 		prev_timer = now_timer;
 		cout << "all :" << now_timer - timer_start << "ms" << endl;
