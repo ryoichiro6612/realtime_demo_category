@@ -15,6 +15,7 @@ typedef struct postits {
 	int recognized_location_rectangle;
 	vector<Mat> postit_image_analyzing;
 	vector<vector<Point2f>>postit_points;
+	vector<vector<vector<Point2f>>> location_points;
 } Postits;
 
 typedef struct postit_info {
@@ -34,6 +35,8 @@ typedef struct postit_info {
 } PostitInfo;
 
 void Timer(LARGE_INTEGER &, string label);
+
+double sum_d(vector<Point2f> point1, vector<Point2f> point2);
 
 void getPostits(Postits * postits, cv::Mat frame, int outer_size);
 vector<int> readDots(Mat, int);

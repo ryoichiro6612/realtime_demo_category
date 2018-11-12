@@ -57,6 +57,18 @@ void Timer(LARGE_INTEGER &prev_timer, string label) {
 	QueryPerformanceCounter(&prev_timer);
 }
 
+double sum_d(vector<Point2f> point1, vector<Point2f>point2) {
+	int size = point1.size();
+	int i;
+	double min_d;
+	for (i = 0; i < size; i++) {
+		double d = 0;
+		for (j = 0; j < size; j++) {
+			norm(point1[(i+j)%size] - point2[j])
+		}
+	}
+}
+
 
 void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 	LARGE_INTEGER recognition_start;
@@ -121,9 +133,8 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 	int i;
 	int ss = 0;
 
-	vector<vector<Point>> marker_contours;
+	vector<RotatedRect> rects;
 
-#pragma omp parallel for
 	for (i = 0; i < contours.size(); i++) {
 		vector<Point> contour = contours[i];
 		cv::RotatedRect rect = minAreaRect(contour);
@@ -141,9 +152,23 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 		if (outer_size * outer_lower < area && area < outer_size * outer_upper) {
 			int idx = hierarchy[i][2];
 			if (idx != -1){
+				vector<Point2f> rect_point;
+				rect.points(&rect_point[0]);
+				extern vector<vector<vector<Point2f>>> before_location_points;
+				int location_id, nlocation;
+				for (location_id = 0; location_id < before_location_points.size(); location_id++) {
+					for (nlocation = 0; nlocation < before_location_points[location_id].size(); nlocation++) {
+						vector<Point2f> before_rect = before_location_points[location_id][nlocation];
+						double dict = sum_d(before_rect, rect_point);
+						if (dict < 100) {
+							location_xy[location_id].push_back(rect_point);
+							before_location_points[location_id].erase(before_location_points.begin + nlocation);
+						}
+					}
+				}
 #pragma omp critical
 				{
-					marker_contours.push_back(contours[i]);
+					rects.push_back(rect);
 				}
 			}
 		}
@@ -155,12 +180,12 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 		int rows = frame_original.rows;
 		int cols = frame_original.cols;
 		#pragma omp parallel for
-		for (mj = 0; mj < marker_contours.size(); mj++) {
+		for (mj = 0; mj < rects.size(); mj++) {
 			//LARGE_INTEGER hei_timer, hei1_timer;
 			//QueryPerformanceCounter(&hei_timer);
 			
-			vector<Point> contour = marker_contours[mj];
-			cv::RotatedRect rect = minAreaRect(contour);
+
+			cv::RotatedRect rect = rects[mj];
 			float area = rect.size.area();
 			vector<Point2f> rect_point(4);
 			vector<Point> rect_int_point(4);
@@ -1383,6 +1408,8 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 	//	//Timer(prev_timer, "read location id");
 	//}
 	}
+
+	postits->location_points = location_xy;
 
 	float expand_ratio = EXPAND_RATIO;
 

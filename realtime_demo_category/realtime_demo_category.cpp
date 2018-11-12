@@ -320,6 +320,8 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 		Timer(prev_timer, "recognition");
 		vector<vector<Point2f>
 		> postit_points = postits.postit_points;
+		before_location_points = postits.location_points;
+
 		//add buffer
 		int i, j;
 		for (i = 0; i < postit_points.size(); i++) {
