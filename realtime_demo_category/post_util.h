@@ -9,14 +9,23 @@
 using namespace std;
 using namespace cv;
 
-static bool kakunin = false;
+static bool kakunin = true;
 
-typedef struct postits {
+//typedef struct postits {
+//	int recognized_location_rectangle;
+//	vector<Mat> postit_image_analyzing;
+//	vector<vector<Point2f>>postit_points;
+//	vector<vector<vector<Point2f>>> location_points;
+//} Postits;
+typedef struct postitpoint {
+	int id;
+	vector<Point2f>points;
+}PostitPoint;
+typedef struct postitresult {
 	int recognized_location_rectangle;
-	vector<Mat> postit_image_analyzing;
-	vector<vector<Point2f>>postit_points;
+	vector<PostitPoint> postitpoints;
 	vector<vector<vector<Point2f>>> location_points;
-} Postits;
+}PostitResult;
 
 typedef struct postit_info {
 	bool has_key;
@@ -38,7 +47,7 @@ void Timer(LARGE_INTEGER &, string label);
 
 double sum_d(vector<Point2f> point1, vector<Point2f> point2);
 
-void getPostits(Postits * postits, cv::Mat frame, int outer_size);
+void getPostits(PostitResult * postits, cv::Mat frame, int outer_size);
 vector<int> readDots(Mat, int);
 Point2f max2f(Point2f*, int, int);
 Point max2i(Point*, int, int);

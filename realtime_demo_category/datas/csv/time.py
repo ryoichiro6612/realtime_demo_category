@@ -1,6 +1,7 @@
 import re
 import csv
 import csv_average as av
+import sys
 def time_write(name):
     csv_table = []
     with open(name + ".log", "r") as f:
@@ -43,8 +44,12 @@ row = []
 #name_list = ["keisoku0", "keisoku5", "keisoku10", "keisokump0", "keisokump5", "keisokump10", "ato10"]
 #for name in name_list:
 #    time_write(name)
-name_list = ["hei1109d", "tyoku1109d"]
-for name in name_list:
-    row = []
-    time_write(name)
-    av.csv_average(name)
+
+if __name__ == '__main__':
+    time_write(sys.argv[1])
+    av.csv_average(sys.argv[1])
+    #name_list = ["hei1109d", "tyoku1109d"]
+    #for name in name_list:
+    #    row = []
+    #    time_write(name)
+    #    av.csv_average(name)

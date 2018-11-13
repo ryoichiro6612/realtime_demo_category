@@ -59,18 +59,30 @@ void Timer(LARGE_INTEGER &prev_timer, string label) {
 
 double sum_d(vector<Point2f> point1, vector<Point2f>point2) {
 	int size = point1.size();
-	int i;
-	double min_d;
+	int i,j;
+	double min_d = -1;
 	for (i = 0; i < size; i++) {
 		double d = 0;
 		for (j = 0; j < size; j++) {
-			norm(point1[(i+j)%size] - point2[j])
+			d += norm(point1[(i + j) % size] - point2[j]);
+		}
+		if (min_d<0 || min_d > d) {
+			min_d = d;
 		}
 	}
+	return min_d;
+}
+vector<Point> vecPointToI(vector<Point2f>point2fs) {
+	vector<Point>point2is;
+	int i;
+	for (i = 0; i < point2fs.size(); i++) {
+		point2is.push_back(Point(int(point2fs[i].x), int(point2fs[i].y)));
+	}
+	return point2is;
 }
 
 
-void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
+void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 	LARGE_INTEGER recognition_start;
 	LARGE_INTEGER now_timer, prev_timer;
 	QueryPerformanceCounter(&recognition_start);
@@ -79,7 +91,7 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 	if (kakunin) {
 		cv::namedWindow("show", cv::WINDOW_AUTOSIZE);
 		imwrite("frame_dame.jpg", frame);
-		//*
+		/*
 		Mat frame_for_select(int(frame.rows * 0.5), int(frame.cols * 0.5), frame.type());
 		cv::resize(frame, frame_for_select, frame_for_select.size());
 		namedWindow("frame", CV_WINDOW_AUTOSIZE);
@@ -134,7 +146,8 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 	int ss = 0;
 
 	vector<RotatedRect> rects;
-
+	int error_thresh = ERROR_THRESH;
+	int moving = 0, not_moving = 0, rect_count = 0;
 	for (i = 0; i < contours.size(); i++) {
 		vector<Point> contour = contours[i];
 		cv::RotatedRect rect = minAreaRect(contour);
@@ -145,6 +158,7 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 		int mi;
 		float outer_lower = OUTER_LOWER;
 		float outer_upper = OUTER_UPPER;
+
 		for (mi = 0; mi < 4; mi++) {
 			rect_int_point[mi] = Point((int)rect_point[mi].x, (int)rect_point[mi].y);
 		}
@@ -152,27 +166,48 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 		if (outer_size * outer_lower < area && area < outer_size * outer_upper) {
 			int idx = hierarchy[i][2];
 			if (idx != -1){
-				vector<Point2f> rect_point;
-				rect.points(&rect_point[0]);
-				extern vector<vector<vector<Point2f>>> before_location_points;
-				int location_id, nlocation;
-				for (location_id = 0; location_id < before_location_points.size(); location_id++) {
-					for (nlocation = 0; nlocation < before_location_points[location_id].size(); nlocation++) {
-						vector<Point2f> before_rect = before_location_points[location_id][nlocation];
-						double dict = sum_d(before_rect, rect_point);
-						if (dict < 100) {
-							location_xy[location_id].push_back(rect_point);
-							before_location_points[location_id].erase(before_location_points.begin + nlocation);
+				rect_count++;
+				extern bool use_moving;
+				if (use_moving) {
+					extern vector<vector<vector<Point2f>>> before_location_points;
+					int location_id = 0, nlocation = 0;
+					bool location_moved = true;
+					for (location_id = 0; location_id < before_location_points.size(); location_id++) {
+						for (nlocation = 0; nlocation < before_location_points[location_id].size(); nlocation++) {
+							vector<Point2f> before_rect = before_location_points[location_id][nlocation];
+							double dict = sum_d(before_rect, rect_point);
+							if (dict < 20) {
+								not_moving++;
+								//cout << dict << endl;
+								location_xy[location_id].push_back(before_rect);
+								before_location_points[location_id].erase(before_location_points[location_id].begin() + nlocation);
+								cv::putText(frame, to_string(location_id),
+									Point(int(mean2f(&before_rect[0],4,0).x), int(mean2f(&before_rect[0], 4, 0).y)),
+									CV_FONT_HERSHEY_PLAIN, 5.0, Scalar(255, 255, 0), 5);
+								cv::fillConvexPoly(frame, &vecPointToI(before_rect)[0], 4, Scalar(0, 0, 255));
+								cv::fillConvexPoly(frame, &rect_int_point[0], 4, Scalar(0, 255, 0));
+								goto contour_loopend;
+							}
 						}
 					}
-				}
 #pragma omp critical
-				{
-					rects.push_back(rect);
+					{
+						moving++;
+						rects.push_back(rect);
+					}
+				contour_loopend:
+					continue;
+				}
+				else {
+#pragma omp critical
+					{
+						rects.push_back(rect);
+					}
 				}
 			}
 		}
 	}
+	//cout << rect_count << " " << moving << " " << not_moving << endl;
 	int mj;
 	extern bool iti_heiretu;
 	if (iti_heiretu) {
@@ -183,7 +218,6 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 		for (mj = 0; mj < rects.size(); mj++) {
 			//LARGE_INTEGER hei_timer, hei1_timer;
 			//QueryPerformanceCounter(&hei_timer);
-			
 
 			cv::RotatedRect rect = rects[mj];
 			float area = rect.size.area();
@@ -786,7 +820,7 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 		//}
 	}
 	else {
-	for (mj = 0; mj < marker_contours.size(); mj++) {
+	for (mj = 0; mj < rects.size(); mj++) {
 		//LARGE_INTEGER tyoku_timer;
 		//QueryPerformanceCounter(&tyoku_timer);
 		int rows = frame_original.rows;
@@ -807,8 +841,8 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 		float outer_upper = OUTER_UPPER;
 		int dot_read_thre = DOT_READ_THRE;
 		int dot_read_area = int(DOT_READ_AREA * expand_ratio);
-		vector<Point> contour = marker_contours[mj];
-		cv::RotatedRect rect = minAreaRect(contour);
+
+		cv::RotatedRect rect = rects[mj];
 		float area = rect.size.area();
 		vector<Point2f> rect_point(4);
 		vector<Point> rect_int_point(4);
@@ -1446,7 +1480,6 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 
 
 	//other parameters
-	int error_thresh = ERROR_THRESH;
 	int dot_read_thre = DOT_READ_THRE;
 	int dot_read_area = int(DOT_READ_AREA * expand_ratio);
 	int point_buffer = int(POINT_BUFFER * expand_ratio); //used when searching in larger area and extract larger area of location point area
@@ -1464,10 +1497,12 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 	//*/
 	cv::findContours(binImage, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
 
-	zikken_output << "探索位置マーカ数=" << marker_contours.size() << endl;
+	zikken_output << "探索位置マーカ数=" << rects.size() << endl;
 	Timer(prev_timer, "recognition 位置マーカ探索:");
+	LARGE_INTEGER iti_timer;
+	QueryPerformanceCounter(&iti_timer);
 
-	cout << omp_get_thread_num() << endl;
+	//cout << omp_get_thread_num() << endl;
 	//make from to vector
 	Point2f vec_from_to[8][8];
 	float correction_width = 5 * expand_ratio;
@@ -1568,8 +1603,8 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 		}
 	}
 
-	//extract postit area
-	//homography
+	Timer(iti_timer, "付箋4角取得");
+
 	vector<Point2f> dst_points_original
 	{ Point2f(horizon_x_buffer + location_width / 2, horizon_y_buffer + location_height / 2),
 		Point2f(postit_width / 2, horizon_y_buffer + location_height / 2),
@@ -1581,19 +1616,19 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 		Point2f(postit_width - horizon_x_buffer - location_height / 2, postit_height / 2)
 	};
 
-	//extract postit area for analyzing
-	//homography
+
 	vector<Point2f> dst_points_original_larger(8);
 	for (i = 0; i < dst_points_original.size(); i++) {
 		dst_points_original_larger[i] = Point2f(larger_buffer, larger_buffer) + dst_points_original[i];
 	}
 
-
-
-
 	//points include 8 points(1 postit's each point)
 	int count = 0;
+	extern vector<PostitPoint> before_postits_points;
+	moving = 0;
+	int notmoving = 0;
 	for (m = 0; m < location_points_all.size(); m++) {
+		
 		vector<Point2f> points = location_points_all[m];
 		vector<Point2f> src_point;
 		vector<Point2f> dst_point;
@@ -1607,34 +1642,8 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 			}
 
 		}
-		cv::Mat M = cv::findHomography(src_point, dst_point_larger, CV_RANSAC, 3);
-		Mat postit_result(postit_height + larger_buffer * 2, postit_width + larger_buffer * 2, CV_8UC3);
-		//try except suru?
-		cv::warpPerspective(frame_original, postit_result, M, postit_result.size());
-		//imshow("out", postit_result);
-		//imwrite("fusen" + to_string(m) + ".jpg", postit_result);
-		//cv::waitKey(1);
-		Mat postit_result_gray;
-		cv::cvtColor(postit_result, postit_result_gray, CV_RGB2GRAY);
-		Mat postit_result_bin;
-		Mat postit_result_morphology;
-		//try except ? 
-		cv::threshold(postit_result_gray, postit_result_bin, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
 
-		//cv::morphologyEx(postit_result_bin, postit_result_morphology, MORPH_OPEN, cv::Mat(), cv::Point(-1, -1), 1);
-		//cv::dilate(postit_result_bin, postit_result_morphology, cv::Mat(), cv::Point(-1, -1), 1);
-
-		/*
-		cv::namedWindow("husen", CV_WINDOW_AUTOSIZE);
-		cv::imshow("husen", postit_result);
-		waitKey(1);
-		cv::namedWindow("husen_bin", CV_WINDOW_AUTOSIZE);
-		cv::imshow("husen_bin", postit_result_bin);
-		waitKey(1);
-
-		imwrite("husen_dame.jpg", postit_result_morphology);
-		//*/
-
+		// 付箋のある座標を記録する
 		Mat M_inv(3, 3, CV_64FC1);
 		M_inv = cv::findHomography(dst_point, src_point, CV_RANSAC, 3);
 		vector<Mat> postit_area;
@@ -1643,7 +1652,6 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 		{ double(postit_width), double(postit_height), 1 },{ 0,double(postit_height),1 } };
 		vector<Mat> postit_area_before{ Mat(3,1,CV_64FC1,&data[0][0]), Mat(3,1,CV_64FC1,&data[1][0]), Mat(3,1,CV_64FC1,&data[2][0]),Mat(3,1,CV_64FC1,&data[3][0]) };
 		vector<Point2f> postit_points_each;
-
 		for (i = 0; i < postit_area_before.size(); i++) {
 			Mat postit_area_before_each = postit_area_before[i];
 			//print postit_area_before_each
@@ -1652,16 +1660,55 @@ void getPostits(Postits * postits, cv::Mat frame, int outer_size) {
 			//miru(postit_area_after);
 			postit_points_each.push_back(Point2f(float(postit_area_after.at<double>(0, 0)), float(postit_area_after.at<double>(1, 0))));
 		}
-		postits->postit_image_analyzing.push_back(postit_result_bin);
-		postits->postit_points.push_back(postit_points_each);
-		count += 1;
-		//miru(postit_area_before[1]);
+		int n;
+
+		bool moving_postit = true;
+		for (n = 0; n < before_postits_points.size(); n++) {
+			double d = sum_d(before_postits_points[n].points, postit_points_each);
+			if (d < 10) {
+				cout << d << endl;
+				//extern vector<int>postit_ids;
+				PostitPoint postitpoint;
+				postitpoint.id = before_postits_points[n].id;
+				postitpoint.points = postit_points_each;
+				postits->postitpoints.push_back(postitpoint);
+				moving_postit = false;
+				notmoving++;
+				break;
+			}
+		}
+		if (!moving_postit) continue;
+		
+
+		//id分析のため付箋の画像を記録
+		cv::Mat M = cv::findHomography(src_point, dst_point_larger, CV_RANSAC, 3);
+		Mat postit_result(postit_height + larger_buffer * 2, postit_width + larger_buffer * 2, CV_8UC3);
+		cv::warpPerspective(frame_original, postit_result, M, postit_result.size());
+		//imshow("out", postit_result);
+		//imwrite("fusen" + to_string(m) + ".jpg", postit_result);
+		//cv::waitKey(1);
+		Mat postit_result_gray;
+		cv::cvtColor(postit_result, postit_result_gray, CV_RGB2GRAY);
+		Mat postit_result_bin;
+		Mat postit_result_morphology;
+		extern vector<Mat> analyzing_images;
+		cv::threshold(postit_result_gray, postit_result_bin, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+		analyzing_images.push_back(postit_result_bin);
+		PostitPoint postitpoint;
+		postitpoint.id = -1;
+		postitpoint.points = postit_points_each;
+		postits->postitpoints.push_back(postitpoint);
+		moving++;
 	}
-	//show frame and delete(for save memory)(information for read is drawn)
-	show_img = cv::Mat(cv::Size(frame.cols / 5, frame.rows / 5), CV_8UC3);
-	cv::resize(frame, show_img, show_img.size());
+	//cout << moving << " " << notmoving << endl;
+	Timer(iti_timer, "位置：座標の記録");
+
 
 	if (kakunin) {
+		//show frame and delete(for save memory)(information for read is drawn)
+		show_img = cv::Mat(cv::Size(frame.cols / 5, frame.rows / 5), CV_8UC3);
+		cv::imwrite("kekka.jpg", frame);
+		cv::resize(frame, show_img, show_img.size());
 		cv::imshow("show", show_img);
 		cv::waitKey(1);
 	}

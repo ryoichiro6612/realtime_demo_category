@@ -39,8 +39,13 @@ bool iti_heiretu;
 bool id_heiretu;
 bool use_gpu;
 bool camera_heiretu;
+bool use_moving;
 std::ofstream zikken_output;
 LARGE_INTEGER freq;
+vector<vector<vector<Point2f>>> before_location_points;
+vector<PostitPoint> before_postits_points;
+vector<Mat> analyzing_images;
+vector<PostitPoint> postit_points;
 
 double dist_thre = DIST_THRE;
 double angle_thre = ANGLE_THRE;
@@ -239,6 +244,9 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 	cv::VideoCapture cap("zikken.wmv");
 	//cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
 	//cap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
+	if (!cap.isOpened()) {
+		cout << "cideo cannot open";
+	}
 	cap >> frame;
 
 
@@ -307,6 +315,7 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 		cap >> frame;
 		if (!frame.cols) {
 			break;
+
 		}
 		Timer(prev_timer, string("camera capture"));
 		//extract only desk_area
@@ -315,35 +324,29 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 
 		Timer(prev_timer, "desk_area extract");
 
-		Postits postits;
+		PostitResult postits;
 		getPostits(&postits, frame_deskarea, outer_size);
 		Timer(prev_timer, "recognition");
-		vector<vector<Point2f>
-		> postit_points = postits.postit_points;
-		before_location_points = postits.location_points;
 
-		//add buffer
 		int i, j;
-		for (i = 0; i < postit_points.size(); i++) {
-			for (j = 0; j < postit_points[i].size(); j++) {
-				postit_points[i][j] += desk_area[0];
-			}
-		}
-
 		//read postit's id and save
-		vector<int> postit_ids;
 
-		for (i = 0; i < postit_points.size(); i++) {
-			Mat postit_image_analyzing = postits.postit_image_analyzing[i];
+		vector<PostitPoint> result;
+		for (i = 0; i < analyzing_images.size(); i++) {
+			Mat postit_image_analyzing = analyzing_images[i];
 			vector<int> bit_array = readDots(postit_image_analyzing, outer_size);
 			int result_num = -1;
 			result_num = reedsolomonDecode(bit_array);
-			postit_ids.push_back(result_num);
+			postits.postitpoints[postits.postitpoints.size() - analyzing_images.size() + i].id = result_num;
 		}
-		
+		analyzing_images.clear();
+		before_postits_points = postits.postitpoints;
+		postit_points = postits.postitpoints;
 		Timer(prev_timer, "id recognition");
-		for (i = 0; i < postit_ids.size(); i++) {
-			int result_num = postit_ids[i];
+
+		for (i = 0; i < postits.postitpoints.size(); i++) {
+			int result_num = postits.postitpoints[i].id;
+
 			//save postit image
 			if (result_num > 0) {
 				if (kakunin) {
@@ -353,15 +356,15 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 				if (postit_saved[result_num].has_key) {
 					//renew
 					postit_saved[result_num].show = true;
-					postit_saved[result_num].points = postit_points[i];
-					postit_saved[result_num].points_saved = postit_points[i];
+					postit_saved[result_num].points = postit_points[i].points;
+					postit_saved[result_num].points_saved = postit_points[i].points;
 					postit_saved[result_num].last_time = timer_count / fps;
 				}
 				else {
 					postit_saved[result_num].has_key = true;
 					postit_saved[result_num].show = true;
-					postit_saved[result_num].points = postit_points[i];
-					postit_saved[result_num].points_saved = postit_points[i];
+					postit_saved[result_num].points = postit_points[i].points;
+					postit_saved[result_num].points_saved = postit_points[i].points;
 					//postit_saved[result_num].naruhodo = 0;
 					postit_saved[result_num].last_time = timer_count / fps;
 					time(&postit_saved[result_num].first_time);
@@ -486,10 +489,12 @@ int main(int argc, char * argv[])
 	id_heiretu = false;
 	use_gpu = false;
 	camera_heiretu = false;
+	use_moving = true;
 	string fname = string("./datas/csv/tyoku") + string(argv[1]) + ".log";
 	zikken_output = ofstream(fname);
 	QueryPerformanceFrequency(&freq);
 	realtimeDemoCategory(argc, argv);
+	return 0;
 	iti_heiretu = true;
 	fname = string("./datas/csv/hei") + string(argv[1]) + ".log";
 	zikken_output = ofstream(fname);
@@ -586,525 +591,524 @@ int main(int argc, char * argv[])
 	std::mutex mtx_camera;
 	waitKey(1000);
 
-	while (1) {
-		cout << "progress  " << std::to_string(int(timer_count / fps) / 60) << ":" << std::to_string((timer_count / fps) % 60) << "\n";
-		DWORD now_timer, prev_timer;
-
-
-		//*usb camera capture frame
-		DWORD timer_start = timeGetTime();
-		mtx_camera.lock();
-		cameraFrame.copyTo(frame);
-		mtx_camera.unlock();
-		DWORD timer_temp = timeGetTime();
-		prev_timer = timer_temp;
-		
-		cout << "camera capture:" << timer_temp - timer_start << "ms" << endl;
-
-		//extract only desk_area
-		Mat frame_deskarea(frame, Rect((int)desk_area[0].x, (int)desk_area[0].y,
-			(int)((desk_area[1] - desk_area[0]).x), (int)(desk_area[1] - desk_area[0]).y));
-
-		now_timer = timeGetTime();
-		
-		cout << "desk_area extract:" << now_timer - prev_timer << "ms" << endl;
-		prev_timer = now_timer;
-		cout << "capture:" << now_timer - timer_start << "ms" <<endl;
-		
-		Postits postits;
-		getPostits(&postits, frame_deskarea, outer_size);
-		now_timer = timeGetTime();
-		cout << "recognition:" << now_timer - prev_timer << "ms" << endl;
-		prev_timer = now_timer;
-		vector<vector<Point2f>
-> postit_points = postits.postit_points;
-		//add buffer
-		int i, j;
-		for (i = 0; i < postit_points.size(); i++) {
-			for (j = 0; j < postit_points[i].size(); j++) {
-				postit_points[i][j] += desk_area[0];
-			}
-		}
-
-
-		//read postit's id and save
-		vector<int> postit_ids;
-		vector<vector<int>> bit_array_list;
-
-		for (i = 0; i < postit_points.size(); i++) {
-			Mat postit_image_analyzing = postits.postit_image_analyzing[i];
-			vector<int> bit_array = readDots(postit_image_analyzing, outer_size);
-			bit_array_list.push_back(bit_array);
-			int result_num = -1;
-			result_num = reedsolomonDecode(bit_array);
-			postit_ids.push_back(result_num);
-			//save postit image
-			if (result_num > 0) {
-				if (kakunin) {
-					cout << result_num << endl;
-				}
-				// already exist
-				if (postit_saved[result_num].has_key) {
-
-					// judge move and rotate
-					// calc dist
-					double dist = double(norm(
-						mean2f(&postit_saved[result_num].points_saved[0], 4, 0) - mean2f(&postit_points[i][0], 4, 0)));
-					// calc angle(degree)
-					Point2f angle_vec_before = postit_saved[result_num].points_saved[0] - postit_saved[result_num].points_saved[1];
-					Point2f angle_vec_after = postit_points[i][0] - postit_points[i][1];
-					double vec_cos = (angle_vec_before.x * angle_vec_after.x + angle_vec_before.y*angle_vec_after.y) /
-						(norm(angle_vec_before)*norm(angle_vec_after));
-					double angle = acos(vec_cos) * 180 / M_PI;
-					//add information
-					if (angle > angle_thre) {
-						time_t timer;
-						time(&timer);
-						postit_saved[result_num].rotate.push_back(timer);
-					}
-					/*
-					if (dist > dist_thre) {
-					int count_move = postit_saved[result_num].move.size();
-					if (count_move == 0) {
-					postit_saved[result_num].move.push_back(time / fps);
-					}
-					else if(time/fps - postit_saved[result_num].move[count_move - 1] > 5){
-					postit_saved[result_num]
-					}
-					}
-					//*/
-					//renew
-					postit_saved[result_num].show = true;
-					postit_saved[result_num].points = postit_points[i];
-					postit_saved[result_num].points_saved = postit_points[i];
-					postit_saved[result_num].last_time = timer_count / fps;
-				}
-				else {
-					postit_saved[result_num].has_key = true;
-					postit_saved[result_num].show = true;
-					postit_saved[result_num].points = postit_points[i];
-					postit_saved[result_num].points_saved = postit_points[i];
-					//postit_saved[result_num].naruhodo = 0;
-					postit_saved[result_num].last_time = timer_count / fps;
-					time(&postit_saved[result_num].first_time);
-				}
-			}
-		}
-		now_timer = timeGetTime();
-		cout << "id recognition:" << now_timer - prev_timer << "ms" << endl;
-		prev_timer = now_timer;
-		for (i = 0; i < postit_saved.size(); i++) {
-			PostitInfo val = postit_saved[i];
-			if (postit_saved[i].show) {
-				if ((timer_count / fps - val.last_time) > time_thre) {
-					postit_saved[i].points[0] = Point2f(-5, 0);
-					postit_saved[i].points[1] = Point2f(0, 0);
-					postit_saved[i].points[2] = Point2f(0, -5);
-					postit_saved[i].points[3] = Point2f(-5, -5);
-					postit_saved[i].show = false;
-				}
-			}
-		}
-
-		//find newest postit
-		int key;
-		for (key = 0; key < postit_saved.size(); key++) {
-			if (postit_saved[key].show) {
-				if (postit_saved[key].rotate.size() != 0) {
-					if (postit_saved[key].rotate.back() > newest_time) {
-						newest_key = key;
-						newest_time = postit_saved[key].rotate.back();
-					}
-				}
-
-			}
-		}
-		for (key = 0; key < postit_saved.size(); key++) {
-			if (postit_saved[key].show) {
-
-				if (postit_saved[key].first_time > newest_time) {
-					newest_key = key;
-					newest_time = postit_saved[key].first_time;
-				}
-			}
-		}
-		if (newest_key != newest_key_saved) {
-			newest_key_saved = newest_key;
-			FILE * naruhodo_csv;
-			fopen_s(&naruhodo_csv, "./datas/csv/naruhodo.csv", "w");
-			//fopen_s(&naruhodo_csv, "./datas/csv/naruhodo.csv", "a");
-			fclose(naruhodo_csv);
-		}
-		//add naruhodo
-		FILE * naruhodo_csv;
-
-		fopen_s(&naruhodo_csv, "./datas/csv/naruhodo.csv", "r");
-		int naruhodo_count = 0;
-		char s[10];
-
-		while (fgets(s, 9, naruhodo_csv) != NULL) {
-			naruhodo_count++;
-		}
-		fclose(naruhodo_csv);
-		fopen_s(&naruhodo_csv, "./datas/csv/naruhodo.csv", "w");
-		//fopen_s(&naruhodo_csv, "./datas/csv/naruhodo.csv", "a");
-		fclose(naruhodo_csv);
-		if (newest_key != -1) {
-			postit_saved[newest_key].naruhodo += naruhodo_count;
-		}
-		//cout << "newest key:" << newest_key << endl;
-		//draw information
-		int brightness = 50;
-		float down_scale_x = 1.0 * float(projector_resolution[0]) / (desk_area[1].x - desk_area[0].x);
-		float down_scale_y = 1.0 * float(projector_resolution[1]) / (desk_area[1].y - desk_area[0].y);
-		int x_buffer = 0;
-		int y_buffer = 0;
-
-		//* dbscan husen cluster number
-		vector <vector<Point>> husen_points;
-		vector<int> vec_id;
-		for (key = 0; key < postit_saved.size(); key++) {
-			if (postit_saved[key].show) {
-				vec_id.push_back(key);
-				vector<Point> Points;
-				int i;
-				for (i = 0; i < postit_saved[key].points.size(); i++) {
-					Points.push_back(Point((int)postit_saved[key].points[i].x, (int)postit_saved[key].points[i].y));
-				}
-				husen_points.push_back(Points);
-			}
-		}
-		vector<vector<int>>C = dbscan_fusen(husen_points, 80);
-
-		for (i = 0; i < C.size(); i++) {
-			for (j = 0; j < C[i].size(); j++) {
-				if (vec_id.size() != 0) {
-					int key = vec_id[C[i][j]];
-					postit_saved[key].cluster_num = i;
-				}
-
-			}
-		}
-		//*/
-
-		projection_img = Mat(projector_resolution[1], projector_resolution[0], CV_8UC3, Scalar(brightness, brightness, brightness));
-
-//gitno変更確かめる
-		/*
-		vector<int> key_vec;
-		vector<Point2f> center_vec;
-		for (key = 0; key < postit_saved.size(); key++) {
-		if (postit_saved[key].show == true) {
-		Point2f center = mean2f(&postit_saved[key].points[0], 4, 0);
-		key_vec.push_back(key);
-		postit_saved[key].center = center;
-		center_vec.push_back(center);
-
-		postit_saved[key].xmeans_points = vector<Point2f>(16);
-		postit_saved[key].xmeans_points[0] = postit_saved[key].points[0];
-		postit_saved[key].xmeans_points[1] = postit_saved[key].points[1];
-		postit_saved[key].xmeans_points[2] = postit_saved[key].points[2];
-		postit_saved[key].xmeans_points[3] = postit_saved[key].points[3];
-		postit_saved[key].xmeans_points[4] = (postit_saved[key].points[0] + postit_saved[key].points[1])*0.5;
-		postit_saved[key].xmeans_points[5] = (postit_saved[key].points[1] + postit_saved[key].points[2])*0.5;
-		postit_saved[key].xmeans_points[6] = (postit_saved[key].points[2] + postit_saved[key].points[3])*0.5;
-		postit_saved[key].xmeans_points[7] = (postit_saved[key].points[0] + postit_saved[key].points[3])*0.5;
-		postit_saved[key].xmeans_points[8] = center + (postit_saved[key].points[0] - center)*0.5;
-		postit_saved[key].xmeans_points[9] = center + (postit_saved[key].points[1] - center)* 0.5;
-		postit_saved[key].xmeans_points[10] = center + (postit_saved[key].points[2] - center)* 0.5;
-		postit_saved[key].xmeans_points[11] = center + (postit_saved[key].points[3] - center)* 0.5;
-		postit_saved[key].xmeans_points[12] = (postit_saved[key].xmeans_points[8] + postit_saved[key].xmeans_points[9])*0.5;
-		postit_saved[key].xmeans_points[13] = (postit_saved[key].xmeans_points[9] + postit_saved[key].xmeans_points[10])*0.5;
-		postit_saved[key].xmeans_points[14] = (postit_saved[key].xmeans_points[10] + postit_saved[key].xmeans_points[11])*0.5;
-		postit_saved[key].xmeans_points[15] = (postit_saved[key].xmeans_points[8] + postit_saved[key].xmeans_points[11])*0.5;
-		}
-		}
-
-		int npts[4] = {16,4,8,16};
-		int npp;
-		int npoints = npts[npp];
-		string center_csv("");
-		for (i = 0; i < key_vec.size(); i++) {
-		int key = key_vec[i];
-		//*
-		for (j = 0; j < npoints; j++) {
-		char data_string[100];
-		//sprintf_s(data_string,100, "%f,%f\n", center_vec[i].x, center_vec[i].y);
-		sprintf_s(data_string, 100, "%f,%f\n", postit_saved[key].xmeans_points[j].x, postit_saved[key].xmeans_points[j].y);
-		center_csv += data_string;
-		}
-		//*/
-		/*
-		char data_string[100];
-		sprintf_s(data_string,100, "%f,%f\n", center_vec[i].x, center_vec[i].y);
-		//sprintf_s(data_string, 100, "%f,%f\n", postit_saved[key].xmeans_points[j].x, postit_saved[key].xmeans_points[j].y);
-		center_csv += data_string;
-		//*/
-		//}
-
-		//cout << center_csv;
-		/*
-		string labels_string = xmeans(&expression, &center_csv[0]);
-		string charmi("\n");
-		vector<string>label_vec_string = ssplit(labels_string, charmi[0]);
-		cout << &labels_string[0];
-		cout << key_vec.size() << endl;
-		cout << label_vec_string.size() << endl;
-		for (i = 0; i < label_vec_string.size() / npoints; i++) {
-		int key = key_vec[i];
-		int vec_label[100];
-		for (j = 0; j < npoints; j++) {
-		vec_label[j] = atoi(&label_vec_string[npoints*i + j][0]);
-		}
-		int label;
-		label = modo(vec_label, npoints);
-		postit_saved[key].cluster_num = label;
-		}
-		*/
-		/*
-		if (key_vec.size() != 0) {
-		int clusterCount = 2;
-		Mat sample(key_vec.size(), 1, CV_64FC2);
-		Mat labels;
-		Mat centers;
-		for (i = 0; i < key_vec.size(); i++) {
-		int key = key_vec[i];
-		sample.at<Vec2d>(i, 0)[0] = (double)postit_saved[key].center.x;
-		sample.at<Vec2d>(i, 0)[1] = (double)postit_saved[key].center.y;
-		}
-		cv::Mat points = cv::Mat::zeros(key_vec.size(), 1, CV_32FC2);
-		for (int i = 0; i<key_vec.size(); ++i) {
-		int key = key_vec[i];
-		points.at<cv::Vec2f>(i, 0)[0] = postit_saved[key].center.x;
-		points.at<cv::Vec2f>(i, 0)[1] = postit_saved[key].center.y;
-		}
-
-		kmeans(points, MIN(key_vec.size(), clusterCount), labels,
-		TermCriteria(TermCriteria::EPS + TermCriteria::COUNT, 10, 1.0),
-		5, KMEANS_PP_CENTERS, centers);
-		std::cout << labels << endl;
-		std::cout << CV_8SC1;
-		int mimi;
-
-		for (i = 0; i < key_vec.size(); i++) {
-		int key = key_vec[i];
-		postit_saved[key].cluster_num = labels.at<int>(i);
-		}
-		//for (i = 0; i < labels.rows; i++) {
-		//	for (j = 0; j < labels.cols; j++) {
-
-		//}
-		//}
-		}
-		//*/
-
-		/*
-		int ncluster = 5;
-		vector<Point2f> cluster_center(ncluster);
-		vector<vector<int>> cluster_mat(ncluster);
-		int clust;
-		for (clust = 0; clust < cluster_center.size(); clust++) {
-		cluster_center[clust] = Point2f(0, 0);
-		}
-		//step1 first state
-		for (key = 0; key < postit_saved.size(); key++) {
-		if (postit_saved[key].show == true) {
-		postit_saved[key].center = mean2f(&postit_saved[key].points[0], 4, 0);
-		int cluster = GetRandom(1, ncluster-1);
-		postit_saved[key].cluster_num = cluster;
-		cluster_mat[cluster].push_back(key);
-		}
-		}
-		bool changed = true;
-		while (changed) {
-		changed = false;
-		//step2 calculate center
-		for (clust = 0; clust < ncluster; clust++) {
-		int j;
-		for (j = 0; j<cluster_mat[clust].size(); j++) {
-		int key = cluster_mat[clust][j];
-		cluster_center[clust] += postit_saved[key].center;
-		}
-		if (cluster_mat[clust].size() > 0) {
-		cluster_center[clust] *= 1.0 / int(cluster_mat[clust].size());
-		}
-		else {
-		cluster_center[clust] = Point2f(-1000, -1000);
-		}
-		}
-		//step3 change cluster nearest center
-		for (key = 0; key < postit_saved.size(); key++) {
-		if (postit_saved[key].show == true) {
-		int nearest_cluster = 0;
-		float min_dist = norm(cluster_center[0] - postit_saved[key].center);
-		for (clust = 0; clust < ncluster; clust++) {
-		float dist = norm(cluster_center[clust] - postit_saved[key].center);
-		if (dist < min_dist) {
-		min_dist = dist;
-		nearest_cluster = clust;
-		}
-		}
-		if (postit_saved[key].cluster_num != nearest_cluster) {
-		changed = true;
-		postit_saved[key].cluster_num = nearest_cluster;
-		}
-
-		}
-		}
-		}
-		//*/
-
-		//projection tuduki
-		projection_img = Mat(projector_resolution[1], projector_resolution[0], CV_8UC3, Scalar(brightness, brightness, brightness));
-		for (key = 0; key < postit_saved.size(); key++) {
-
-			if (postit_saved[key].show == true) {
-				//cout << key << endl;
-				vector<Point> caliblated_points(4);
-				int i;
-				for (i = 0; i < 4; i++) {
-					vector<Point2f> before_points{ Point2f((float)desk_area[0].x,(float)desk_area[0].y), Point2f((float)desk_area[2].x,(float)desk_area[2].y),
-						Point2f((float)desk_area[1].x,(float)desk_area[1].y), Point2f((float)desk_area[3].x,(float)desk_area[3].y) };
-					vector<Point2f> after_points{ Point2f(0,0), Point2f(projector_resolution[0], 0),
-						Point2f(projector_resolution[0],projector_resolution[1]), Point2f(0, projector_resolution[1]) };
-					Mat M = cv::getPerspectiveTransform(before_points, after_points);
-					Point2f each_point = postit_saved[key].points[i];
-					cv::Mat eachpoint_3d = (cv::Mat_<double>(3, 1) << (double)each_point.x, (double)each_point.y, 1);
-					cv::Mat caliblatedPoint_3d(3, 1, CV_64FC1);
-					caliblatedPoint_3d = M*eachpoint_3d;
-					caliblated_points[i] = Point(projector_resolution[0] - (int)caliblatedPoint_3d.at<double>(0, 0), projector_resolution[1] - (int)caliblatedPoint_3d.at<double>(1, 0));
-					/*
-					caliblated_points[i] = Point((int)((each_point.x - desk_area[0].x)*down_scale_x) - x_buffer,
-					(int)((each_point.y - desk_area[0].y)*down_scale_y) - y_buffer);
-					//*/
-				}
-
-				float buff_ratio = 0.0;
-				caliblated_points[0] += ((caliblated_points[1] - caliblated_points[2]) +
-					(caliblated_points[3] - caliblated_points[2])) * buff_ratio;
-				caliblated_points[1] += ((caliblated_points[0] - caliblated_points[3]) + (
-					caliblated_points[2] - caliblated_points[3])) * buff_ratio;
-				caliblated_points[2] += ((caliblated_points[1] - caliblated_points[0]) + (
-					caliblated_points[3] - caliblated_points[0])) * buff_ratio;
-				caliblated_points[3] += ((caliblated_points[0] - caliblated_points[1]) + (
-					caliblated_points[2] - caliblated_points[1])) * buff_ratio;
-
-
-				/*
-				Point hosei(-120, -100);
-				for (i = 0; i < 4; i++) {
-				caliblated_points[i] += hosei;
-				}
-				//*/
-
-				/*
-				if (key == newest_key) {
-				cv::drawContours(projection_img,
-				vector<vector<Point>>{caliblated_points}, 0,
-				Scalar(0, 0, 255), 2);
-				}
-				else {
-				cv::drawContours(projection_img,
-				vector<vector<Point>>{caliblated_points}, 0,
-				Scalar(226, 188, 163), 2);
-				}
-
-				//*/
-				/*
-				cv::drawContours(projection_img,
-				vector<vector<Point>>{caliblated_points}, 0,
-				Color[postit_saved[key].cluster_num], 2);
-				//*/
-				Point2f center_point = mean2i(&caliblated_points[0], 4, 0);
-
-				//*
-				cv::putText(projection_img, to_string(key),
-					Point(int(center_point.x - 60), int(center_point.y - 20) + 0),
-					CV_FONT_HERSHEY_PLAIN, 2.5, Color[postit_saved[key].cluster_num], 5);
-
-				//*/
-
-				/*
-				if (key < 64) {
-				cv::drawContours(projection_img,
-				vector<vector<Point>>{caliblated_points}, 0,
-				Scalar(0, 0, 255), 2);
-				}
-				else if (key <128) {
-				cv::drawContours(projection_img,
-				vector<vector<Point>>{caliblated_points}, 0,
-				Scalar(0, 255, 0), 2);
-				}
-				else if (key < 192) {
-				cv::drawContours(projection_img,
-				vector<vector<Point>>{caliblated_points}, 0,
-				Scalar(255, 0, 0), 2);
-				}
-				else if (key < 256) {
-				cv::drawContours(projection_img,
-				vector<vector<Point>>{caliblated_points}, 0,
-				Scalar(0, 255, 255), 2);
-				}
-				//*/
-				/*
-				cv::putText(projection_img, to_string(key),
-				Point(int(center_point.x + 80), int(center_point.y) + 100),
-				CV_FONT_HERSHEY_PLAIN, 4.0, Scalar(100, 70, 202), 5);
-				//*/
-
-				time_t d = postit_saved[key].first_time;
-				struct tm t_st;
-				localtime_s(&t_st, &d);
-
-				/*
-				cv::putText(projection_img, to_string(t_st.tm_hour) + ":" + to_string(t_st.tm_min) + ":" + to_string(t_st.tm_sec),
-				Point(center_point.x - 100, max2i(&caliblated_points[0], 4, 0).y + 20),
-				CV_FONT_HERSHEY_PLAIN, 1.5, Scalar(197, 126, 24), 2);
-				//*/
-			}
-			/*
-			#cv2.drawContours(projection_img,
-			#                 [np.array(caliblated_points)], 0,
-			#                 (226, 188, 163), -1)
-			#    center_point = np.mean(caliblated_points, axis=0)
-
-
-
-			#cv2.putText(projection_img, str(postit_saved[key]["naruhodo"]), (
-			#    int(center_point[0] +  80),
-			#    int(center_point[1]) + 100), cv2.FONT_HERSHEY_PLAIN, 4.0,
-			#            (100, 70, 202), 5)
-
-
-
-			d = postit_saved[key]["first_time"]
-			#    cv2.putText(projection_img, str(d.hour) + ":" + str(d.minute) + ":" + str(d.second), (
-			#        int(center_point[0] - 100),
-			#        int(np.max(caliblated_points, axis = 0)[1]) + 20), cv2.FONT_HERSHEY_PLAIN, 1.5,
-			#                (197, 126, 24), 2)
-			//*/
-
-		}
-
-
-
-		/*
-		Mat resized_projection_img((int)(projection_img.rows / 5.0), (int)(projection_img.cols / 5.0), projection_img.type());
-		cv::resize(projection_img, resized_projection_img, resized_projection_img.size());
-		*/
-		imshow("projection", projection_img);
-		int c;
-		c = cv::waitKey(1);
-		if (c == 27) {
-			break;
-		}
-
-		now_timer = timeGetTime();
-		cout << "add_information:" << now_timer - prev_timer << "ms" << endl;
-		prev_timer = now_timer;
-		cout << "all :" << now_timer - timer_start << "ms" << endl;
-		timer_count++;
-	}
+//	while (1) {
+//		cout << "progress  " << std::to_string(int(timer_count / fps) / 60) << ":" << std::to_string((timer_count / fps) % 60) << "\n";
+//		DWORD now_timer, prev_timer;
+//
+//
+//		//*usb camera capture frame
+//		DWORD timer_start = timeGetTime();
+//		mtx_camera.lock();
+//		cameraFrame.copyTo(frame);
+//		mtx_camera.unlock();
+//		DWORD timer_temp = timeGetTime();
+//		prev_timer = timer_temp;
+//		
+//		cout << "camera capture:" << timer_temp - timer_start << "ms" << endl;
+//
+//		//extract only desk_area
+//		Mat frame_deskarea(frame, Rect((int)desk_area[0].x, (int)desk_area[0].y,
+//			(int)((desk_area[1] - desk_area[0]).x), (int)(desk_area[1] - desk_area[0]).y));
+//
+//		now_timer = timeGetTime();
+//		
+//		cout << "desk_area extract:" << now_timer - prev_timer << "ms" << endl;
+//		prev_timer = now_timer;
+//		cout << "capture:" << now_timer - timer_start << "ms" <<endl;
+//		
+//		Postits postits;
+//		getPostits(&postits, frame_deskarea, outer_size);
+//		now_timer = timeGetTime();
+//		cout << "recognition:" << now_timer - prev_timer << "ms" << endl;
+//		prev_timer = now_timer;
+//		vector<vector<Point2f>
+//> postit_points = postits.postit_points;
+//		//add buffer
+//		int i, j;
+//		for (i = 0; i < postit_points.size(); i++) {
+//			for (j = 0; j < postit_points[i].size(); j++) {
+//				postit_points[i][j] += desk_area[0];
+//			}
+//		}
+//
+//
+//		//read postit's id and save
+//		vector<vector<int>> bit_array_list;
+//
+//		for (i = 0; i < postit_points.size(); i++) {
+//			Mat postit_image_analyzing = postits.postit_image_analyzing[i];
+//			vector<int> bit_array = readDots(postit_image_analyzing, outer_size);
+//			bit_array_list.push_back(bit_array);
+//			int result_num = -1;
+//			result_num = reedsolomonDecode(bit_array);
+//			postit_ids.push_back(result_num);
+//			//save postit image
+//			if (result_num > 0) {
+//				if (kakunin) {
+//					//cout << result_num << endl;
+//				}
+//				// already exist
+//				if (postit_saved[result_num].has_key) {
+//
+//					// judge move and rotate
+//					// calc dist
+//					double dist = double(norm(
+//						mean2f(&postit_saved[result_num].points_saved[0], 4, 0) - mean2f(&postit_points[i][0], 4, 0)));
+//					// calc angle(degree)
+//					Point2f angle_vec_before = postit_saved[result_num].points_saved[0] - postit_saved[result_num].points_saved[1];
+//					Point2f angle_vec_after = postit_points[i][0] - postit_points[i][1];
+//					double vec_cos = (angle_vec_before.x * angle_vec_after.x + angle_vec_before.y*angle_vec_after.y) /
+//						(norm(angle_vec_before)*norm(angle_vec_after));
+//					double angle = acos(vec_cos) * 180 / M_PI;
+//					//add information
+//					if (angle > angle_thre) {
+//						time_t timer;
+//						time(&timer);
+//						postit_saved[result_num].rotate.push_back(timer);
+//					}
+//					/*
+//					if (dist > dist_thre) {
+//					int count_move = postit_saved[result_num].move.size();
+//					if (count_move == 0) {
+//					postit_saved[result_num].move.push_back(time / fps);
+//					}
+//					else if(time/fps - postit_saved[result_num].move[count_move - 1] > 5){
+//					postit_saved[result_num]
+//					}
+//					}
+//					//*/
+//					//renew
+//					postit_saved[result_num].show = true;
+//					postit_saved[result_num].points = postit_points[i];
+//					postit_saved[result_num].points_saved = postit_points[i];
+//					postit_saved[result_num].last_time = timer_count / fps;
+//				}
+//				else {
+//					postit_saved[result_num].has_key = true;
+//					postit_saved[result_num].show = true;
+//					postit_saved[result_num].points = postit_points[i];
+//					postit_saved[result_num].points_saved = postit_points[i];
+//					//postit_saved[result_num].naruhodo = 0;
+//					postit_saved[result_num].last_time = timer_count / fps;
+//					time(&postit_saved[result_num].first_time);
+//				}
+//			}
+//		}
+//		now_timer = timeGetTime();
+//		cout << "id recognition:" << now_timer - prev_timer << "ms" << endl;
+//		prev_timer = now_timer;
+//		for (i = 0; i < postit_saved.size(); i++) {
+//			PostitInfo val = postit_saved[i];
+//			if (postit_saved[i].show) {
+//				if ((timer_count / fps - val.last_time) > time_thre) {
+//					postit_saved[i].points[0] = Point2f(-5, 0);
+//					postit_saved[i].points[1] = Point2f(0, 0);
+//					postit_saved[i].points[2] = Point2f(0, -5);
+//					postit_saved[i].points[3] = Point2f(-5, -5);
+//					postit_saved[i].show = false;
+//				}
+//			}
+//		}
+//
+//		//find newest postit
+//		int key;
+//		for (key = 0; key < postit_saved.size(); key++) {
+//			if (postit_saved[key].show) {
+//				if (postit_saved[key].rotate.size() != 0) {
+//					if (postit_saved[key].rotate.back() > newest_time) {
+//						newest_key = key;
+//						newest_time = postit_saved[key].rotate.back();
+//					}
+//				}
+//
+//			}
+//		}
+//		for (key = 0; key < postit_saved.size(); key++) {
+//			if (postit_saved[key].show) {
+//
+//				if (postit_saved[key].first_time > newest_time) {
+//					newest_key = key;
+//					newest_time = postit_saved[key].first_time;
+//				}
+//			}
+//		}
+//		if (newest_key != newest_key_saved) {
+//			newest_key_saved = newest_key;
+//			FILE * naruhodo_csv;
+//			fopen_s(&naruhodo_csv, "./datas/csv/naruhodo.csv", "w");
+//			//fopen_s(&naruhodo_csv, "./datas/csv/naruhodo.csv", "a");
+//			fclose(naruhodo_csv);
+//		}
+//		//add naruhodo
+//		FILE * naruhodo_csv;
+//
+//		fopen_s(&naruhodo_csv, "./datas/csv/naruhodo.csv", "r");
+//		int naruhodo_count = 0;
+//		char s[10];
+//
+//		while (fgets(s, 9, naruhodo_csv) != NULL) {
+//			naruhodo_count++;
+//		}
+//		fclose(naruhodo_csv);
+//		fopen_s(&naruhodo_csv, "./datas/csv/naruhodo.csv", "w");
+//		//fopen_s(&naruhodo_csv, "./datas/csv/naruhodo.csv", "a");
+//		fclose(naruhodo_csv);
+//		if (newest_key != -1) {
+//			postit_saved[newest_key].naruhodo += naruhodo_count;
+//		}
+//		//cout << "newest key:" << newest_key << endl;
+//		//draw information
+//		int brightness = 50;
+//		float down_scale_x = 1.0 * float(projector_resolution[0]) / (desk_area[1].x - desk_area[0].x);
+//		float down_scale_y = 1.0 * float(projector_resolution[1]) / (desk_area[1].y - desk_area[0].y);
+//		int x_buffer = 0;
+//		int y_buffer = 0;
+//
+//		//* dbscan husen cluster number
+//		vector <vector<Point>> husen_points;
+//		vector<int> vec_id;
+//		for (key = 0; key < postit_saved.size(); key++) {
+//			if (postit_saved[key].show) {
+//				vec_id.push_back(key);
+//				vector<Point> Points;
+//				int i;
+//				for (i = 0; i < postit_saved[key].points.size(); i++) {
+//					Points.push_back(Point((int)postit_saved[key].points[i].x, (int)postit_saved[key].points[i].y));
+//				}
+//				husen_points.push_back(Points);
+//			}
+//		}
+//		vector<vector<int>>C = dbscan_fusen(husen_points, 80);
+//
+//		for (i = 0; i < C.size(); i++) {
+//			for (j = 0; j < C[i].size(); j++) {
+//				if (vec_id.size() != 0) {
+//					int key = vec_id[C[i][j]];
+//					postit_saved[key].cluster_num = i;
+//				}
+//
+//			}
+//		}
+//		//*/
+//
+//		projection_img = Mat(projector_resolution[1], projector_resolution[0], CV_8UC3, Scalar(brightness, brightness, brightness));
+//
+////gitno変更確かめる
+//		/*
+//		vector<int> key_vec;
+//		vector<Point2f> center_vec;
+//		for (key = 0; key < postit_saved.size(); key++) {
+//		if (postit_saved[key].show == true) {
+//		Point2f center = mean2f(&postit_saved[key].points[0], 4, 0);
+//		key_vec.push_back(key);
+//		postit_saved[key].center = center;
+//		center_vec.push_back(center);
+//
+//		postit_saved[key].xmeans_points = vector<Point2f>(16);
+//		postit_saved[key].xmeans_points[0] = postit_saved[key].points[0];
+//		postit_saved[key].xmeans_points[1] = postit_saved[key].points[1];
+//		postit_saved[key].xmeans_points[2] = postit_saved[key].points[2];
+//		postit_saved[key].xmeans_points[3] = postit_saved[key].points[3];
+//		postit_saved[key].xmeans_points[4] = (postit_saved[key].points[0] + postit_saved[key].points[1])*0.5;
+//		postit_saved[key].xmeans_points[5] = (postit_saved[key].points[1] + postit_saved[key].points[2])*0.5;
+//		postit_saved[key].xmeans_points[6] = (postit_saved[key].points[2] + postit_saved[key].points[3])*0.5;
+//		postit_saved[key].xmeans_points[7] = (postit_saved[key].points[0] + postit_saved[key].points[3])*0.5;
+//		postit_saved[key].xmeans_points[8] = center + (postit_saved[key].points[0] - center)*0.5;
+//		postit_saved[key].xmeans_points[9] = center + (postit_saved[key].points[1] - center)* 0.5;
+//		postit_saved[key].xmeans_points[10] = center + (postit_saved[key].points[2] - center)* 0.5;
+//		postit_saved[key].xmeans_points[11] = center + (postit_saved[key].points[3] - center)* 0.5;
+//		postit_saved[key].xmeans_points[12] = (postit_saved[key].xmeans_points[8] + postit_saved[key].xmeans_points[9])*0.5;
+//		postit_saved[key].xmeans_points[13] = (postit_saved[key].xmeans_points[9] + postit_saved[key].xmeans_points[10])*0.5;
+//		postit_saved[key].xmeans_points[14] = (postit_saved[key].xmeans_points[10] + postit_saved[key].xmeans_points[11])*0.5;
+//		postit_saved[key].xmeans_points[15] = (postit_saved[key].xmeans_points[8] + postit_saved[key].xmeans_points[11])*0.5;
+//		}
+//		}
+//
+//		int npts[4] = {16,4,8,16};
+//		int npp;
+//		int npoints = npts[npp];
+//		string center_csv("");
+//		for (i = 0; i < key_vec.size(); i++) {
+//		int key = key_vec[i];
+//		//*
+//		for (j = 0; j < npoints; j++) {
+//		char data_string[100];
+//		//sprintf_s(data_string,100, "%f,%f\n", center_vec[i].x, center_vec[i].y);
+//		sprintf_s(data_string, 100, "%f,%f\n", postit_saved[key].xmeans_points[j].x, postit_saved[key].xmeans_points[j].y);
+//		center_csv += data_string;
+//		}
+//		//*/
+//		/*
+//		char data_string[100];
+//		sprintf_s(data_string,100, "%f,%f\n", center_vec[i].x, center_vec[i].y);
+//		//sprintf_s(data_string, 100, "%f,%f\n", postit_saved[key].xmeans_points[j].x, postit_saved[key].xmeans_points[j].y);
+//		center_csv += data_string;
+//		//*/
+//		//}
+//
+//		//cout << center_csv;
+//		/*
+//		string labels_string = xmeans(&expression, &center_csv[0]);
+//		string charmi("\n");
+//		vector<string>label_vec_string = ssplit(labels_string, charmi[0]);
+//		cout << &labels_string[0];
+//		cout << key_vec.size() << endl;
+//		cout << label_vec_string.size() << endl;
+//		for (i = 0; i < label_vec_string.size() / npoints; i++) {
+//		int key = key_vec[i];
+//		int vec_label[100];
+//		for (j = 0; j < npoints; j++) {
+//		vec_label[j] = atoi(&label_vec_string[npoints*i + j][0]);
+//		}
+//		int label;
+//		label = modo(vec_label, npoints);
+//		postit_saved[key].cluster_num = label;
+//		}
+//		*/
+//		/*
+//		if (key_vec.size() != 0) {
+//		int clusterCount = 2;
+//		Mat sample(key_vec.size(), 1, CV_64FC2);
+//		Mat labels;
+//		Mat centers;
+//		for (i = 0; i < key_vec.size(); i++) {
+//		int key = key_vec[i];
+//		sample.at<Vec2d>(i, 0)[0] = (double)postit_saved[key].center.x;
+//		sample.at<Vec2d>(i, 0)[1] = (double)postit_saved[key].center.y;
+//		}
+//		cv::Mat points = cv::Mat::zeros(key_vec.size(), 1, CV_32FC2);
+//		for (int i = 0; i<key_vec.size(); ++i) {
+//		int key = key_vec[i];
+//		points.at<cv::Vec2f>(i, 0)[0] = postit_saved[key].center.x;
+//		points.at<cv::Vec2f>(i, 0)[1] = postit_saved[key].center.y;
+//		}
+//
+//		kmeans(points, MIN(key_vec.size(), clusterCount), labels,
+//		TermCriteria(TermCriteria::EPS + TermCriteria::COUNT, 10, 1.0),
+//		5, KMEANS_PP_CENTERS, centers);
+//		std::cout << labels << endl;
+//		std::cout << CV_8SC1;
+//		int mimi;
+//
+//		for (i = 0; i < key_vec.size(); i++) {
+//		int key = key_vec[i];
+//		postit_saved[key].cluster_num = labels.at<int>(i);
+//		}
+//		//for (i = 0; i < labels.rows; i++) {
+//		//	for (j = 0; j < labels.cols; j++) {
+//
+//		//}
+//		//}
+//		}
+//		//*/
+//
+//		/*
+//		int ncluster = 5;
+//		vector<Point2f> cluster_center(ncluster);
+//		vector<vector<int>> cluster_mat(ncluster);
+//		int clust;
+//		for (clust = 0; clust < cluster_center.size(); clust++) {
+//		cluster_center[clust] = Point2f(0, 0);
+//		}
+//		//step1 first state
+//		for (key = 0; key < postit_saved.size(); key++) {
+//		if (postit_saved[key].show == true) {
+//		postit_saved[key].center = mean2f(&postit_saved[key].points[0], 4, 0);
+//		int cluster = GetRandom(1, ncluster-1);
+//		postit_saved[key].cluster_num = cluster;
+//		cluster_mat[cluster].push_back(key);
+//		}
+//		}
+//		bool changed = true;
+//		while (changed) {
+//		changed = false;
+//		//step2 calculate center
+//		for (clust = 0; clust < ncluster; clust++) {
+//		int j;
+//		for (j = 0; j<cluster_mat[clust].size(); j++) {
+//		int key = cluster_mat[clust][j];
+//		cluster_center[clust] += postit_saved[key].center;
+//		}
+//		if (cluster_mat[clust].size() > 0) {
+//		cluster_center[clust] *= 1.0 / int(cluster_mat[clust].size());
+//		}
+//		else {
+//		cluster_center[clust] = Point2f(-1000, -1000);
+//		}
+//		}
+//		//step3 change cluster nearest center
+//		for (key = 0; key < postit_saved.size(); key++) {
+//		if (postit_saved[key].show == true) {
+//		int nearest_cluster = 0;
+//		float min_dist = norm(cluster_center[0] - postit_saved[key].center);
+//		for (clust = 0; clust < ncluster; clust++) {
+//		float dist = norm(cluster_center[clust] - postit_saved[key].center);
+//		if (dist < min_dist) {
+//		min_dist = dist;
+//		nearest_cluster = clust;
+//		}
+//		}
+//		if (postit_saved[key].cluster_num != nearest_cluster) {
+//		changed = true;
+//		postit_saved[key].cluster_num = nearest_cluster;
+//		}
+//
+//		}
+//		}
+//		}
+//		//*/
+//
+//		//projection tuduki
+//		projection_img = Mat(projector_resolution[1], projector_resolution[0], CV_8UC3, Scalar(brightness, brightness, brightness));
+//		for (key = 0; key < postit_saved.size(); key++) {
+//
+//			if (postit_saved[key].show == true) {
+//				//cout << key << endl;
+//				vector<Point> caliblated_points(4);
+//				int i;
+//				for (i = 0; i < 4; i++) {
+//					vector<Point2f> before_points{ Point2f((float)desk_area[0].x,(float)desk_area[0].y), Point2f((float)desk_area[2].x,(float)desk_area[2].y),
+//						Point2f((float)desk_area[1].x,(float)desk_area[1].y), Point2f((float)desk_area[3].x,(float)desk_area[3].y) };
+//					vector<Point2f> after_points{ Point2f(0,0), Point2f(projector_resolution[0], 0),
+//						Point2f(projector_resolution[0],projector_resolution[1]), Point2f(0, projector_resolution[1]) };
+//					Mat M = cv::getPerspectiveTransform(before_points, after_points);
+//					Point2f each_point = postit_saved[key].points[i];
+//					cv::Mat eachpoint_3d = (cv::Mat_<double>(3, 1) << (double)each_point.x, (double)each_point.y, 1);
+//					cv::Mat caliblatedPoint_3d(3, 1, CV_64FC1);
+//					caliblatedPoint_3d = M*eachpoint_3d;
+//					caliblated_points[i] = Point(projector_resolution[0] - (int)caliblatedPoint_3d.at<double>(0, 0), projector_resolution[1] - (int)caliblatedPoint_3d.at<double>(1, 0));
+//					/*
+//					caliblated_points[i] = Point((int)((each_point.x - desk_area[0].x)*down_scale_x) - x_buffer,
+//					(int)((each_point.y - desk_area[0].y)*down_scale_y) - y_buffer);
+//					//*/
+//				}
+//
+//				float buff_ratio = 0.0;
+//				caliblated_points[0] += ((caliblated_points[1] - caliblated_points[2]) +
+//					(caliblated_points[3] - caliblated_points[2])) * buff_ratio;
+//				caliblated_points[1] += ((caliblated_points[0] - caliblated_points[3]) + (
+//					caliblated_points[2] - caliblated_points[3])) * buff_ratio;
+//				caliblated_points[2] += ((caliblated_points[1] - caliblated_points[0]) + (
+//					caliblated_points[3] - caliblated_points[0])) * buff_ratio;
+//				caliblated_points[3] += ((caliblated_points[0] - caliblated_points[1]) + (
+//					caliblated_points[2] - caliblated_points[1])) * buff_ratio;
+//
+//
+//				/*
+//				Point hosei(-120, -100);
+//				for (i = 0; i < 4; i++) {
+//				caliblated_points[i] += hosei;
+//				}
+//				//*/
+//
+//				/*
+//				if (key == newest_key) {
+//				cv::drawContours(projection_img,
+//				vector<vector<Point>>{caliblated_points}, 0,
+//				Scalar(0, 0, 255), 2);
+//				}
+//				else {
+//				cv::drawContours(projection_img,
+//				vector<vector<Point>>{caliblated_points}, 0,
+//				Scalar(226, 188, 163), 2);
+//				}
+//
+//				//*/
+//				/*
+//				cv::drawContours(projection_img,
+//				vector<vector<Point>>{caliblated_points}, 0,
+//				Color[postit_saved[key].cluster_num], 2);
+//				//*/
+//				Point2f center_point = mean2i(&caliblated_points[0], 4, 0);
+//
+//				//*
+//				cv::putText(projection_img, to_string(key),
+//					Point(int(center_point.x - 60), int(center_point.y - 20) + 0),
+//					CV_FONT_HERSHEY_PLAIN, 2.5, Color[postit_saved[key].cluster_num], 5);
+//
+//				//*/
+//
+//				/*
+//				if (key < 64) {
+//				cv::drawContours(projection_img,
+//				vector<vector<Point>>{caliblated_points}, 0,
+//				Scalar(0, 0, 255), 2);
+//				}
+//				else if (key <128) {
+//				cv::drawContours(projection_img,
+//				vector<vector<Point>>{caliblated_points}, 0,
+//				Scalar(0, 255, 0), 2);
+//				}
+//				else if (key < 192) {
+//				cv::drawContours(projection_img,
+//				vector<vector<Point>>{caliblated_points}, 0,
+//				Scalar(255, 0, 0), 2);
+//				}
+//				else if (key < 256) {
+//				cv::drawContours(projection_img,
+//				vector<vector<Point>>{caliblated_points}, 0,
+//				Scalar(0, 255, 255), 2);
+//				}
+//				//*/
+//				/*
+//				cv::putText(projection_img, to_string(key),
+//				Point(int(center_point.x + 80), int(center_point.y) + 100),
+//				CV_FONT_HERSHEY_PLAIN, 4.0, Scalar(100, 70, 202), 5);
+//				//*/
+//
+//				time_t d = postit_saved[key].first_time;
+//				struct tm t_st;
+//				localtime_s(&t_st, &d);
+//
+//				/*
+//				cv::putText(projection_img, to_string(t_st.tm_hour) + ":" + to_string(t_st.tm_min) + ":" + to_string(t_st.tm_sec),
+//				Point(center_point.x - 100, max2i(&caliblated_points[0], 4, 0).y + 20),
+//				CV_FONT_HERSHEY_PLAIN, 1.5, Scalar(197, 126, 24), 2);
+//				//*/
+//			}
+//			/*
+//			#cv2.drawContours(projection_img,
+//			#                 [np.array(caliblated_points)], 0,
+//			#                 (226, 188, 163), -1)
+//			#    center_point = np.mean(caliblated_points, axis=0)
+//
+//
+//
+//			#cv2.putText(projection_img, str(postit_saved[key]["naruhodo"]), (
+//			#    int(center_point[0] +  80),
+//			#    int(center_point[1]) + 100), cv2.FONT_HERSHEY_PLAIN, 4.0,
+//			#            (100, 70, 202), 5)
+//
+//
+//
+//			d = postit_saved[key]["first_time"]
+//			#    cv2.putText(projection_img, str(d.hour) + ":" + str(d.minute) + ":" + str(d.second), (
+//			#        int(center_point[0] - 100),
+//			#        int(np.max(caliblated_points, axis = 0)[1]) + 20), cv2.FONT_HERSHEY_PLAIN, 1.5,
+//			#                (197, 126, 24), 2)
+//			//*/
+//
+//		}
+//
+//
+//
+//		/*
+//		Mat resized_projection_img((int)(projection_img.rows / 5.0), (int)(projection_img.cols / 5.0), projection_img.type());
+//		cv::resize(projection_img, resized_projection_img, resized_projection_img.size());
+//		*/
+//		imshow("projection", projection_img);
+//		int c;
+//		c = cv::waitKey(1);
+//		if (c == 27) {
+//			break;
+//		}
+//
+//		now_timer = timeGetTime();
+//		cout << "add_information:" << now_timer - prev_timer << "ms" << endl;
+//		prev_timer = now_timer;
+//		cout << "all :" << now_timer - timer_start << "ms" << endl;
+//		timer_count++;
+//	}
 	/*
 	// Stop capturing images
 	error = cam.StopCapture();
