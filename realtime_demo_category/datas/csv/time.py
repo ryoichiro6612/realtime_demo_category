@@ -15,7 +15,11 @@ def time_write(name):
                     print(csv_line)
                     csv_table.append(csv_line)
                     csv_line = []
-
+            # m = re.split("#", line)
+            # if len(m) >= 2:
+            #     print(m)
+            #     staterow.append(m[0])
+            #     statedata.append(str(m[1]))
             m = re.split(",", line)
             if len(m) >= 2:
                 print(m)
@@ -30,8 +34,12 @@ def time_write(name):
     #    csv_table[i].pop(7)
     with open(name + ".csv", "w") as f:
         writer = csv.writer(f)
+        # writer.writerow(staterow)
+        # print(statedata)
+        # writer.writerows(statedata)
         writer.writerow(row)
         writer.writerows(csv_table)
+        print(csv_table)
 
 
 # row = [u"1-1カメラから画像抽出", u"1-2認識エリアの切り抜き", u"画像抽出", \
@@ -41,6 +49,8 @@ def time_write(name):
 #    u"認識：コピー",u"グレイ化",u"2値化",u"輪郭抽出",u"位置マーカ探索",u"付箋領域を認識"\
 #    ,u"認識all",u"id認識", u"後処理"]
 row = []
+staterow = []
+statedata = []
 #name_list = ["keisoku0", "keisoku5", "keisoku10", "keisokump0", "keisokump5", "keisokump10", "ato10"]
 #for name in name_list:
 #    time_write(name)
@@ -48,6 +58,7 @@ row = []
 if __name__ == '__main__':
     time_write(sys.argv[1])
     av.csv_average(sys.argv[1])
+    av.csv_stat(sys.argv[1])
     #name_list = ["hei1109d", "tyoku1109d"]
     #for name in name_list:
     #    row = []

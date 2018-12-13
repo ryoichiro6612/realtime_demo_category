@@ -9,7 +9,12 @@
 using namespace std;
 using namespace cv;
 
-static bool kakunin = true;
+static bool kakunin = false;
+#define KERNEL 19
+#define C_TEI 8
+#define OUTER_SIZE 450
+//#define KERNEL 7
+//#define C_TEI 1.5
 
 //typedef struct postits {
 //	int recognized_location_rectangle;
@@ -42,8 +47,6 @@ typedef struct postit_info {
 	int cluster_num;
 
 } PostitInfo;
-
-void Timer(LARGE_INTEGER &, string label);
 
 double sum_d(vector<Point2f> point1, vector<Point2f> point2);
 

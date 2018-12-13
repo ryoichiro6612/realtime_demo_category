@@ -12,15 +12,21 @@
 #include <windows.h>
 #include <mutex>
 #include <fstream>
+#include <thread>
+#include <exception>
 
 
 #include "analyze_config.h"
 #include "read_config.h"
 #include "postit_config.h"
+#include "zikken_state.h"
 
 #include "post_util.h"
 #include "realtime_demo_category.h"
+#include "gpu_image.h"
 #pragma comment (lib, "WinMM.Lib")
+
+Mat before_binImage;
 
 
 
@@ -48,14 +54,7 @@ void miru(Mat m) {
 	cout << "\n";
 }
 
-void Timer(LARGE_INTEGER &prev_timer, string label) {
-	LARGE_INTEGER now_timer;
-	QueryPerformanceCounter(&now_timer);
-	extern LARGE_INTEGER freq;
-	zikken_output << label << "," << double(now_timer.QuadPart - prev_timer.QuadPart)*1000/freq.QuadPart << endl;
-	//cout << label << "," << double(now_timer.QuadPart - prev_timer.QuadPart) * 1000 / freq.QuadPart << endl;
-	QueryPerformanceCounter(&prev_timer);
-}
+
 
 double sum_d(vector<Point2f> point1, vector<Point2f>point2) {
 	int size = point1.size();
@@ -80,769 +79,60 @@ vector<Point> vecPointToI(vector<Point2f>point2fs) {
 	}
 	return point2is;
 }
-
-
-void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
-	LARGE_INTEGER recognition_start;
-	LARGE_INTEGER now_timer, prev_timer;
-	QueryPerformanceCounter(&recognition_start);
-	prev_timer = recognition_start;
-	Mat show_img;
-	if (kakunin) {
-		cv::namedWindow("show", cv::WINDOW_AUTOSIZE);
-		imwrite("frame_dame.jpg", frame);
-		/*
-		Mat frame_for_select(int(frame.rows * 0.5), int(frame.cols * 0.5), frame.type());
-		cv::resize(frame, frame_for_select, frame_for_select.size());
-		namedWindow("frame", CV_WINDOW_AUTOSIZE);
-		cv::flip(frame_for_select, frame_for_select, -1);
-		cv::imshow("frame", frame_for_select);
-		waitKey(1);
-		//*/
-	}
-
+class ReadLocationId {
+	cv::RotatedRect rect;
+	float expand_ratio = EXPAND_RATIO;
+	int point_buffer = int(POINT_BUFFER * expand_ratio);
+	int outer_size = OUTER_SIZE;
+	float point_buffer_for_larger = point_buffer / expand_ratio * pow(outer_size / 220, 0.5);
+	cv::Rect larger_area_rect;
+	Mat larger_area;
+	float outer_lower = OUTER_LOWER;
+	float outer_upper = OUTER_UPPER;
+	const int location_dot_num = LOCATION_DOT_NUM;
+	int x_buffer = int(X_BUFFER * expand_ratio);//from rectangle's edge
+	int y_buffer = int(Y_BUFFER * expand_ratio); //from rectangle's edge
+	int space_x = int(SPACE_X * expand_ratio);
+	int rect_len = int(RECT_LEN * expand_ratio);
+	int location_width = x_buffer * 2 + space_x * (location_dot_num - 1) + rect_len;
+	int location_height = int(LOCATION_HEIGHT * expand_ratio);
+	int line_width = int(LINE_WIDTH * expand_ratio);
+	int dot_read_thre = DOT_READ_THRE;
+	int dot_read_area = int(DOT_READ_AREA * expand_ratio);
+	int rows;
+	int cols;
+	vector<Point2f>  box_a_after;
+	int location_id = -1;
+public:
 	
+	void set(RotatedRect re, Mat frame_original) {
+		rect = re;
+		Point2f box[4];
+		rect.points(box);
+		Point2f max_point;
+		Point2f min_point;
+		rows = frame_original.rows;
+		cols = frame_original.cols;
+		max_point = max2f(box, 4, 0);
+		min_point = min2f(box, 4, 0);
+		int min_y = max(0, int(min_point.y - point_buffer_for_larger));
+		int max_y = min(rows, int(max_point.y + point_buffer_for_larger));
+		int min_x = max(0, int(min_point.x - point_buffer_for_larger));
+		int max_x = min(cols, int(max_point.x + point_buffer_for_larger));
+		//cout << max_point.x << max_point.y << endl;
+		larger_area_rect = Rect(min_x, min_y, max_x - min_x, max_y - min_y);
+		larger_area = Mat(frame_original, larger_area_rect);
 
-	//frame.copyTo(frame_original);
-	Mat frame_original;
-	if (kakunin == true) {
-		frame_original = Mat(frame.rows, frame.cols, frame.type());
-		frame.copyTo(frame_original);
 	}
-	else {
-		frame_original = frame;
+	int getResult() {
+		return location_id;
 	}
-	Timer(prev_timer, " recognition コピー : ");
-	/*
-	namedWindow("original", CV_WINDOW_AUTOSIZE);
-	imshow("original", frame_original);
-	waitKey(1);
-	cout << CV_8UC3;
-	cout << frame.type();
-	//cv::Mat grayImage(frame.rows, frame.cols, CV_8UC1);
-	//*/
-
-	Mat grayImage;
-	cv::cvtColor(frame, grayImage, CV_RGB2GRAY);
-	Timer(prev_timer, "recognition グレー化");
-	cv::Mat binImage(frame.rows, frame.cols, CV_8UC1);
-	cv::adaptiveThreshold(grayImage, binImage, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY, 25, 9);
-	//imwrite("mybinImageha.jpg", binImage);
-
-	vector<vector<Point>> contours;
-	vector<Vec4i> hierarchy;
-
-	Timer(prev_timer, "recognition 2値化:");
-
-
-	cv::findContours(binImage, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
-	
-	Timer(prev_timer, "recognition 輪郭抽出");
-
-
-	vector<vector<vector<Point2f>>> location_xy(8);
-	std::mutex mtx_location;
-	int i;
-	int ss = 0;
-
-	vector<RotatedRect> rects;
-	int error_thresh = ERROR_THRESH;
-	int moving = 0, not_moving = 0, rect_count = 0;
-	for (i = 0; i < contours.size(); i++) {
-		vector<Point> contour = contours[i];
-		cv::RotatedRect rect = minAreaRect(contour);
-		float area = rect.size.area();
-		vector<Point2f> rect_point(4);
-		vector<Point> rect_int_point(4);
-		rect.points(&rect_point[0]);
-		int mi;
-		float outer_lower = OUTER_LOWER;
-		float outer_upper = OUTER_UPPER;
-
-		for (mi = 0; mi < 4; mi++) {
-			rect_int_point[mi] = Point((int)rect_point[mi].x, (int)rect_point[mi].y);
-		}
-		//cout << area << "\n";
-		if (outer_size * outer_lower < area && area < outer_size * outer_upper) {
-			int idx = hierarchy[i][2];
-			if (idx != -1){
-				rect_count++;
-				extern bool use_moving;
-				if (use_moving) {
-					extern vector<vector<vector<Point2f>>> before_location_points;
-					int location_id = 0, nlocation = 0;
-					bool location_moved = true;
-					for (location_id = 0; location_id < before_location_points.size(); location_id++) {
-						for (nlocation = 0; nlocation < before_location_points[location_id].size(); nlocation++) {
-							vector<Point2f> before_rect = before_location_points[location_id][nlocation];
-							double dict = sum_d(before_rect, rect_point);
-							if (dict < 20) {
-								not_moving++;
-								//cout << dict << endl;
-								location_xy[location_id].push_back(before_rect);
-								before_location_points[location_id].erase(before_location_points[location_id].begin() + nlocation);
-								cv::putText(frame, to_string(location_id),
-									Point(int(mean2f(&before_rect[0],4,0).x), int(mean2f(&before_rect[0], 4, 0).y)),
-									CV_FONT_HERSHEY_PLAIN, 5.0, Scalar(255, 255, 0), 5);
-								cv::fillConvexPoly(frame, &vecPointToI(before_rect)[0], 4, Scalar(0, 0, 255));
-								cv::fillConvexPoly(frame, &rect_int_point[0], 4, Scalar(0, 255, 0));
-								goto contour_loopend;
-							}
-						}
-					}
-#pragma omp critical
-					{
-						moving++;
-						rects.push_back(rect);
-					}
-				contour_loopend:
-					continue;
-				}
-				else {
-#pragma omp critical
-					{
-						rects.push_back(rect);
-					}
-				}
-			}
-		}
+	vector<Point2f> getBoxAfter() {
+		return box_a_after;
 	}
-	//cout << rect_count << " " << moving << " " << not_moving << endl;
-	int mj;
-	extern bool iti_heiretu;
-	if (iti_heiretu) {
-		//やること　長方形抽出
-		int rows = frame_original.rows;
-		int cols = frame_original.cols;
-		#pragma omp parallel for
-		for (mj = 0; mj < rects.size(); mj++) {
-			//LARGE_INTEGER hei_timer, hei1_timer;
-			//QueryPerformanceCounter(&hei_timer);
-
-			cv::RotatedRect rect = rects[mj];
-			float area = rect.size.area();
-			vector<Point2f> rect_point(4);
-			vector<Point> rect_int_point(4);
-			rect.points(&rect_point[0]);
-			int mi;
-			for (mi = 0; mi < 4; mi++) {
-				rect_int_point[mi] = Point((int)rect_point[mi].x, (int)rect_point[mi].y);
-			}
-			float wh_ratio = rect.size.width / rect.size.height;
-			if (wh_ratio < 1) {
-				wh_ratio = 1 / wh_ratio;
-			}
-			if (wh_ratio > 2.5) {
-				continue;
-			}
-			//extract larger area
-			Point2f box[4];
-			rect.points(box);
-			Point2f max_point;
-			Point2f min_point;
-			max_point = max2f(box, 4, 0);
-			min_point = min2f(box, 4, 0);
-
-			float expand_ratio = EXPAND_RATIO;
-			int point_buffer = int(POINT_BUFFER * expand_ratio); //used when searching in larger area and extract larger area of location point area
-
-			float point_buffer_for_larger = point_buffer / expand_ratio * pow(outer_size / 220, 0.5);
-			int min_y = max(0, int(min_point.y - point_buffer_for_larger));
-			int max_y = min(rows, int(max_point.y + point_buffer_for_larger));
-			int min_x = max(0, int(min_point.x - point_buffer_for_larger));
-			int max_x = min(cols, int(max_point.x + point_buffer_for_larger));
-			cv::Rect larger_area_rect(min_x, min_y, max_x - min_x, max_y - min_y);
-			cv::Mat larger_area(frame_original, larger_area_rect);
-			cv::Mat larger_area_grayImage(larger_area.size(), CV_8UC1);
-			cv::cvtColor(larger_area, larger_area_grayImage, CV_RGB2GRAY);
-			cv::Mat bin_larger_area(larger_area.size(), CV_8UC1);
-			cv::threshold(larger_area_grayImage, bin_larger_area, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
-
-			bool flag_changed = false;
-			//find contours inlarger area
-			std::vector<std::vector<Point>> contours_in_larger;
-			std::vector<Vec4i>hierarchy_in_larger;
-			cv::findContours(bin_larger_area, contours_in_larger, hierarchy_in_larger, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
-			int j;
-
-			float outer_lower = OUTER_LOWER;
-			float outer_upper = OUTER_UPPER;
-
-			for (j = 0; j < contours_in_larger.size(); j++) {
-				cv::RotatedRect rect_in_larger;
-				vector<Point> contour_in_larger;
-				contour_in_larger = contours_in_larger[j];
-				rect_in_larger = minAreaRect(contour_in_larger);
-				float area_in_larger = rect_in_larger.size.area();
-				Point2f box_in_larger[4];
-				rect_in_larger.points(box_in_larger);
-				if (outer_size * outer_lower < area_in_larger && area_in_larger < outer_size * outer_upper) {
-					int idx = hierarchy_in_larger[j][2];
-					if (idx != -1) {
-						int k;
-						for (k = 0; k < 4; k++) {
-							box[k] = Point2f(min_point.x - point_buffer_for_larger + box_in_larger[k].x,
-								min_point.y - point_buffer_for_larger + box_in_larger[k].y);
-						}
-						flag_changed = true;
-					}
-				}
-			}
-			//find candidate of left-top
-			vector<int> candidate;
-			for (j = 0; j < 4; j++) {
-				if (norm(box[j] - box[(j + 1) % 4]) > norm(box[(j + 1) % 4] - box[(j + 2) % 4])) {
-					candidate.push_back(j);
-				}
-			}
-
-			const int location_dot_num = LOCATION_DOT_NUM;
-			int x_buffer = int(X_BUFFER * expand_ratio);//from rectangle's edge
-			int y_buffer = int(Y_BUFFER * expand_ratio); //from rectangle's edge
-			int space_x = int(SPACE_X * expand_ratio);
-			int rect_len = int(RECT_LEN * expand_ratio);
-			int location_width = x_buffer * 2 + space_x * (location_dot_num - 1) + rect_len;
-			int location_height = int(LOCATION_HEIGHT * expand_ratio);
-			int line_width = int(LINE_WIDTH * expand_ratio);
-			int dot_read_thre = DOT_READ_THRE;
-			int dot_read_area = int(DOT_READ_AREA * expand_ratio);
-
-			//read each location's id
-			for (j = 0; j < candidate.size(); j++) {
-				int id = candidate[j];
-				vector<Point2f> before_points;
-				int k;
-				for (k = 0; k < 4; k++) {
-					before_points.push_back(box[(k + id) % 4]);
-				}
-				RotatedRect before_points_rotatedrect;
-				before_points_rotatedrect = cv::minAreaRect(before_points);
-				Rect before_points_rect;
-				before_points_rect = before_points_rotatedrect.boundingRect();
-				if (before_points_rect.x < 0) {
-					before_points_rect.x = 0;
-				}
-				if (before_points_rect.y < 0) {
-					before_points_rect.y = 0;
-				}
-				if (before_points_rect.width + before_points_rect.x > cols) {
-					before_points_rect.width = cols - before_points_rect.x;
-				}
-				if (before_points_rect.height + before_points_rect.y > rows) {
-					before_points_rect.height = rows - before_points_rect.y;
-				}
-				for (k = 0; k < 4; k++) {
-					before_points[k].x -= larger_area_rect.x;
-					before_points[k].y -= larger_area_rect.y;
-				}
-
-				/*Mat before_points_area(larger_area, Rect(before_points_rect.tl() - larger_area_rect.tl(),
-					Size(before_points_rect.width, before_points_rect.height)));*/
-				//Mat before_points_area(frame_original, before_points_rect);
-				vector<Point2f> after_points{
-					Point2f(0 + point_buffer, 0 + point_buffer),
-					Point2f(location_width + point_buffer, 0 + point_buffer),
-					Point2f(location_width + point_buffer, location_height + point_buffer),
-					Point2f(0 + point_buffer, location_height + point_buffer)
-				};
-				/*
-				cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
-				cv::imshow("out", before_points_area);
-				cv::waitKey(1);
-				//*/
-				cv::Mat M = cv::getPerspectiveTransform(before_points, after_points);
-				cv::Mat dst(location_height + point_buffer * 2, location_width + point_buffer * 2, CV_8UC1);
-				cv::warpPerspective(larger_area, dst, M, dst.size());
-
-				cv::Mat dst_grayImage(dst.size(), CV_8UC1);
-				cv::Mat dst_binImage(dst.size(), CV_8UC1);
-				cv::cvtColor(dst, dst_grayImage, CV_RGB2GRAY);
-				cv::threshold(dst_grayImage, dst_binImage, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
-				/*
-				cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
-				cv::imshow("out", dst_binImage);
-				cv::waitKey(1);
-				//*/
-
-				Point2f box_a_sorted[4];
-				if (flag_changed == false) {
-
-					Mat dst_copy(dst_binImage.size(), CV_8UC1);
-					dst_binImage.copyTo(dst_copy);
-
-					std::vector<std::vector<Point>> contours_a;
-					std::vector<Vec4i>hierarchy_a;
-					cv::findContours(dst_binImage, contours_a, hierarchy_a, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
-
-					//find contours again
-					for (k = 0; k < contours_a.size(); k++) {
-						RotatedRect rect_a = cv::minAreaRect(contours_a[k]);
-						Point2f box_a[4];
-						float area_a;
-						rect_a.points(box_a);
-						area_a = rect_a.size.area();
-						int idx_a = hierarchy_a[k][2];
-						float location_area_size = location_width * location_height;
-						if (idx_a != -1
-							&& area_a > location_area_size * outer_lower
-							&& area_a < location_area_size * outer_upper) {
-							vector<vector<Point>> contour(1);
-							contour[0] = contours_a[k];
-							//cv::drawContours(frame, contour, 0, (0, 255, 255), 2);
-							//calc left-top
-							int l;
-							int box_left_top_idx;
-							for (l = 0; l < 4; l++) {
-								if (box_a[l].x < rect_a.center.x && box_a[l].y < rect_a.center.y) {
-									box_left_top_idx = l;
-									break;
-								}
-							}
-							for (l = 0; l < 4; l++) {
-								box_a_sorted[l] = box_a[(l + box_left_top_idx) % 4];
-							}
-						}
-						else {
-							int l;
-							for (l = 0; l < 4; l++) {
-								box_a_sorted[l] = Point(0, 0);
-							}
-						}
-					}
-				}
-				else {
-					for (k = 0; k < 4; k++) {
-						box_a_sorted[k] = after_points[k];
-					}
-				}
-				if (box_a_sorted[1].x == 0) {
-					continue;
-				}
-
-				//read each point
-				float area_width = max2f(box_a_sorted, 4, 0).x - min2f(box_a_sorted, 4, 0).x;
-				float area_height = max2f(box_a_sorted, 4, 0).y - min2f(box_a_sorted, 4, 0).y;
-				float center_x = mean2f(box_a_sorted, 4, 0).x;
-				float location_ratio = float(area_width + area_height) / (location_width + location_height + line_width * 2);
-				float space_x_mod = space_x * location_ratio;
-				float to_center_dst = (location_width / 2.0 - (x_buffer + rect_len / 2.0 + space_x * 2))*location_ratio;
-
-				bool dot_point[location_dot_num];
-
-				for (k = 0; k < location_dot_num; k++) {
-					dot_point[k] = 0;
-					int x = max(0, int(center_x - to_center_dst + space_x_mod * (k - 2) - dot_read_area));
-					int y = max(0, int(box_a_sorted[0].y + area_height / 2 - dot_read_area));
-					int width = 2 * dot_read_area;
-					int height = 2 * dot_read_area;
-					/*
-					if (x + width < dst_binImage.cols) {
-					x = min(x, dst_binImage.cols);
-					width = dst_binImage.cols - x;
-					}
-					if (y + height < dst_binImage.rows) {
-					y = min(y, dst_binImage.rows);
-					height = dst_binImage.rows - y;
-					}
-					*/
-					cv::Rect dst_rect(x,
-						y,
-						width,
-						height);
-					cv::Mat dst_area(dst_binImage, dst_rect);
-					//miru(dst_area);
-					double ha = cv::mean(dst_area).val[0];
-					if (cv::mean(dst_area).val[0] < double(dot_read_thre)) {
-						dot_point[k] = 1;
-					}
-
-				}
-				if (dot_point[0] == 1 && dot_point[location_dot_num - 1] == 0) {
-					vector<Point2f>  box_a_after(4);
-
-					//calc dot id
-					int dot_id = 0;
-					int m;
-					for (m = 1; m < location_dot_num - 1; m++) {
-						if (dot_point[m] == 1) {
-							dot_id += int(pow(2, m - 1));
-						}
-					}
-					//homography_inv
-					vector<Point2f> after_points(4);
-					for (m = 0; m < 4; m++) {
-						after_points[m] = box[(m + id) % 4];
-					}
-					vector<Point2f>before_points{
-						Point2f(0 + point_buffer, 0 + point_buffer),
-						Point2f(location_width + point_buffer, 0 + point_buffer),
-						Point2f(location_width + point_buffer, location_height + point_buffer),
-						Point2f(0 + point_buffer, location_height + point_buffer)
-					};
-					cv::Mat M_inv(3, 3, CV_64FC1);
-					M_inv = getPerspectiveTransform(before_points, after_points);
-
-					for (m = 0; m < 4; m++) {
-						cv::Mat box_3d = (cv::Mat_<double>(3, 1) << box_a_sorted[m].x, box_a_sorted[m].y, 1);
-						//Mat box_3d(3, 1, CV_64FC1, { before_points[m].x, before_points[m].y, 1 });
-						cv::Mat box_a_after_each(3, 1, CV_64FC1);
-						box_a_after_each = M_inv * box_3d;
-						//cv::warpPerspective(box_3d[m], box_a_after_each, M_inv, box_a_after_each.size());
-						float x = float(box_a_after_each.at<double>(0, 0));
-						float y = float(box_a_after_each.at<double>(1, 0));
-						box_a_after[m].x = x;
-						box_a_after[m].y = y;
-						if (kakunin)
-							cv::circle(frame, Point(int(box_a_after_each.at<double>(0, 0)), int(box_a_after_each.at<double>(1, 0))), 5, Scalar(100, 100, 100), 5);
-					}
-					mtx_location.lock();
-					location_xy[dot_id].push_back(box_a_after);
-					mtx_location.unlock();
-					//write each id in this point
-					if (kakunin) {
-						cv::putText(frame, to_string(dot_id),
-							Point(int(mean2f(&box_a_after[0], 4, 0).x), int(mean2f(&box_a_after[0], 4, 0).y)),
-							CV_FONT_HERSHEY_PLAIN, 5.0, Scalar(0, 255, 0), 5);
-					}
-				}
-			}
-			//QueryPerformanceCounter(&hei1_timer);
-			//LARGE_INTEGER freq;
-			//QueryPerformanceFrequency(&freq);
-//#pragma omp critical
-			//{
-			//	cout << "hei 1loop" << "," << double(hei1_timer.QuadPart - hei_timer.QuadPart) * 1000 / freq.QuadPart << endl;
-			//}
-		}
-
-		//#pragma omp parallel for
-		//for (mj = 0; mj < marker_contours.size(); mj++) {
-			/*vector<Point> contour = marker_contours[mj];
-			cv::RotatedRect rect = minAreaRect(contour);
-			float area = rect.size.area();
-			vector<Point2f> rect_point(4);
-			vector<Point> rect_int_point(4);
-			rect.points(&rect_point[0]);
-			int mi;
-			for (mi = 0; mi < 4; mi++) {
-				rect_int_point[mi] = Point((int)rect_point[mi].x, (int)rect_point[mi].y);
-			}*/
-			//if(100 < area && area < 3000){
-
-			/*
-			//cout << area << "\n";
-			cv::drawContours(frame, contours, i, Scalar(255, 0, 255), 1.0);
-			//cv::drawContours(frame, vector<vector<Point>>{rect_int_point}, 0, Scalar(0, 0, 255), 5.0);
-			cv::putText(frame, to_string(int(area)), contours[i][0], CV_FONT_HERSHEY_PLAIN, 5.0, Scalar(0, 128, 0), 3);
-			//*
-			show_img = cv::Mat(cv::Size(frame.cols / 5, frame.rows / 5), CV_8UC3);
-			cv::resize(frame, show_img, show_img.size());
-			cv::imshow("show", show_img);
-			cv::waitKey(1);
-			//*/
-			/*float wh_ratio = rect.size.width / rect.size.height;
-			if (wh_ratio < 1) {
-				wh_ratio = 1 / wh_ratio;
-			}
-			if (wh_ratio > 2.5) {
-				continue;
-			}
-
-			if (kakunin) {
-				cv::drawContours(frame, contours, i, Scalar(255, 0, 255), 1.0);
-				cv::drawContours(frame, vector<vector<Point>>{rect_int_point}, 0, Scalar(0, 255, 255), 5.0);
-				cv::putText(frame, to_string(int(area)), contours[i][0], CV_FONT_HERSHEY_PLAIN, 5.0, Scalar(0, 128, 255), 2.0);
-			}*/
-			//extract larger area
-			/*Point2f box[4];
-			rect.points(box);
-			Point2f max_point;
-			Point2f min_point;
-			max_point = max2f(box, 4, 0);
-			min_point = min2f(box, 4, 0);
-			float point_buffer_for_larger = point_buffer / expand_ratio * pow(outer_size / 220, 0.5);
-			int min_y = max(0, int(min_point.y - point_buffer_for_larger));
-			int max_y = min(frame_original.rows, int(max_point.y + point_buffer_for_larger));
-			int min_x = max(0, int(min_point.x - point_buffer_for_larger));
-			int max_x = min(frame_original.cols, int(max_point.x + point_buffer_for_larger));
-			cv::Rect larger_area_rect(min_x, min_y, max_x - min_x, max_y - min_y);
-			cv::Mat larger_area(frame_original, larger_area_rect);
-			cv::Mat larger_area_grayImage(larger_area.size(), CV_8UC1);
-			cv::cvtColor(larger_area, larger_area_grayImage, CV_RGB2GRAY);
-			cv::Mat bin_larger_area(larger_area.size(), CV_8UC1);
-			cv::threshold(larger_area_grayImage, bin_larger_area, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);*/
-
-			/*
-			namedWindow("larger_area", CV_WINDOW_AUTOSIZE);
-			imshow("larger_area", frame_original);
-			waitKey(1);
-			//*/
-
-
-			//find contours inlarger area
-			/*bool flag_changed = false;
-
-			std::vector<std::vector<Point>> contours_in_larger;
-			std::vector<Vec4i>hierarchy_in_larger;
-			cv::findContours(bin_larger_area, contours_in_larger, hierarchy_in_larger, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
-			int j;
-			for (j = 0; j != contours_in_larger.size(); j++) {
-				cv::RotatedRect rect_in_larger;
-				vector<Point> contour_in_larger;
-				contour_in_larger = contours_in_larger[j];
-				rect_in_larger = minAreaRect(contour_in_larger);
-				float area_in_larger = rect_in_larger.size.area();
-				Point2f box_in_larger[4];
-				rect_in_larger.points(box_in_larger);
-				if (outer_size * outer_lower < area_in_larger && area_in_larger < outer_size * outer_upper) {
-					int idx = hierarchy_in_larger[j][2];
-					if (idx != -1) {
-						int k;
-						for (k = 0; k < 4; k++) {
-							box[k] = Point2f(min_point.x - point_buffer_for_larger + box_in_larger[k].x,
-								min_point.y - point_buffer_for_larger + box_in_larger[k].y);
-						}
-						flag_changed = true;
-					}
-				}
-			}*/
-
-
-			//find candidate of left-top
-		/*	vector<int> candidate;
-			for (j = 0; j < 4; j++) {
-				if (norm(box[j] - box[(j + 1) % 4]) > norm(box[(j + 1) % 4] - box[(j + 2) % 4])) {
-					candidate.push_back(j);
-				}
-			}*/
-
-
-			//read each location's id
-			//for (j = 0; j < candidate.size(); j++) {
-			//	/*
-			//	cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
-			//	cv::imshow("out", frame_original);
-			//	cv::waitKey(1);
-			//	*/
-
-			//	int id = candidate[j];
-			//	vector<Point2f> before_points;
-			//	int k;
-			//	for (k = 0; k < 4; k++) {
-			//		before_points.push_back(box[(k + id) % 4]);
-			//	}
-			//	RotatedRect before_points_rotatedrect;
-			//	before_points_rotatedrect = minAreaRect(before_points);
-			//	Rect before_points_rect;
-			//	before_points_rect = before_points_rotatedrect.boundingRect();
-			//	if (before_points_rect.x < 0) {
-			//		before_points_rect.x = 0;
-			//	}
-			//	if (before_points_rect.y < 0) {
-			//		before_points_rect.y = 0;
-			//	}
-			//	if (before_points_rect.width + before_points_rect.x > frame_original.cols) {
-			//		before_points_rect.width = frame_original.cols - before_points_rect.x;
-			//	}
-			//	if (before_points_rect.height + before_points_rect.y > frame_original.rows) {
-			//		before_points_rect.height = frame_original.rows - before_points_rect.y;
-			//	}
-
-			//	Mat before_points_area(frame_original, before_points_rect);
-			//	vector<Point2f> after_points{
-			//		Point2f(0 + point_buffer, 0 + point_buffer),
-			//		Point2f(location_width + point_buffer, 0 + point_buffer),
-			//		Point2f(location_width + point_buffer, location_height + point_buffer),
-			//		Point2f(0 + point_buffer, location_height + point_buffer)
-			//	};
-			//	/*
-			//	cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
-			//	cv::imshow("out", before_points_area);
-			//	cv::waitKey(1);
-			//	//*/
-			//	cv::Mat M = cv::getPerspectiveTransform(before_points, after_points);
-			//	cv::Mat dst(location_height + point_buffer * 2, location_width + point_buffer * 2, frame_original.type());
-			//	cv::warpPerspective(frame_original, dst, M, dst.size());
-
-			//	cv::Mat dst_grayImage(dst.size(), CV_8UC1);
-			//	cv::Mat dst_binImage(dst.size(), CV_8UC1);
-			//	cv::cvtColor(dst, dst_grayImage, CV_RGB2GRAY);
-			//	cv::threshold(dst_grayImage, dst_binImage, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
-			//	/*
-			//	cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
-			//	cv::imshow("out", dst_binImage);
-			//	cv::waitKey(1);
-			//	//*/
-
-			//	Point2f box_a_sorted[4];
-			//	if (flag_changed == false) {
-
-			//		Mat dst_copy(dst_binImage.size(), CV_8UC1);
-			//		dst_binImage.copyTo(dst_copy);
-
-			//		std::vector<std::vector<Point>> contours_a;
-			//		std::vector<Vec4i>hierarchy_a;
-			//		cv::findContours(dst_binImage, contours_a, hierarchy_a, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
-
-			//		//find contours again
-			//		for (k = 0; k < contours_a.size(); k++) {
-			//			RotatedRect rect_a = cv::minAreaRect(contours_a[k]);
-			//			Point2f box_a[4];
-			//			float area_a;
-			//			rect_a.points(box_a);
-			//			area_a = rect_a.size.area();
-			//			int idx_a = hierarchy_a[k][2];
-			//			float location_area_size = location_width * location_height;
-			//			if (idx_a != -1
-			//				&& area_a > location_area_size * outer_lower
-			//				&& area_a < location_area_size * outer_upper) {
-			//				vector<vector<Point>> contour(1);
-			//				contour[0] = contours_a[k];
-			//				//cv::drawContours(frame, contour, 0, (0, 255, 255), 2);
-			//				//calc left-top
-			//				int l;
-			//				int box_left_top_idx;
-			//				for (l = 0; l < 4; l++) {
-			//					if (box_a[l].x < rect_a.center.x && box_a[l].y < rect_a.center.y) {
-			//						box_left_top_idx = l;
-			//						break;
-			//					}
-			//				}
-			//				for (l = 0; l < 4; l++) {
-			//					box_a_sorted[l] = box_a[(l + box_left_top_idx) % 4];
-			//				}
-			//			}
-			//			else {
-			//				int l;
-			//				for (l = 0; l < 4; l++) {
-			//					box_a_sorted[l] = Point(0, 0);
-			//				}
-			//			}
-			//		}
-			//	}
-			//	else {
-			//		for (k = 0; k < 4; k++) {
-			//			box_a_sorted[k] = after_points[k];
-			//		}
-			//	}
-			//	if (box_a_sorted[1].x == 0) {
-			//		continue;
-			//	}
-
-			//	//read each point
-			//	float area_width = max2f(box_a_sorted, 4, 0).x - min2f(box_a_sorted, 4, 0).x;
-			//	float area_height = max2f(box_a_sorted, 4, 0).y - min2f(box_a_sorted, 4, 0).y;
-			//	float center_x = mean2f(box_a_sorted, 4, 0).x;
-			//	float location_ratio = float(area_width + area_height) / (location_width + location_height + line_width * 2);
-			//	float space_x_mod = space_x * location_ratio;
-			//	float to_center_dst = (location_width / 2.0 - (x_buffer + rect_len / 2.0 + space_x * 2))*location_ratio;
-
-			//	bool dot_point[location_dot_num];
-
-			//	for (k = 0; k < location_dot_num; k++) {
-			//		dot_point[k] = 0;
-			//		int x = max(0, int(center_x - to_center_dst + space_x_mod * (k - 2) - dot_read_area));
-			//		int y = max(0, int(box_a_sorted[0].y + area_height / 2 - dot_read_area));
-			//		int width = 2 * dot_read_area;
-			//		int height = 2 * dot_read_area;
-			//		/*
-			//		if (x + width < dst_binImage.cols) {
-			//		x = min(x, dst_binImage.cols);
-			//		width = dst_binImage.cols - x;
-			//		}
-			//		if (y + height < dst_binImage.rows) {
-			//		y = min(y, dst_binImage.rows);
-			//		height = dst_binImage.rows - y;
-			//		}
-			//		*/
-			//		cv::Rect dst_rect(x,
-			//			y,
-			//			width,
-			//			height);
-			//		cv::Mat dst_area(dst_binImage, dst_rect);
-			//		//miru(dst_area);
-			//		double ha = cv::mean(dst_area).val[0];
-			//		if (cv::mean(dst_area).val[0] < double(dot_read_thre)) {
-			//			dot_point[k] = 1;
-			//		}
-
-			//	}
-			//	if (dot_point[0] == 1 && dot_point[location_dot_num - 1] == 0) {
-			//		vector<Point2f>  box_a_after(4);
-
-			//		//calc dot id
-			//		int dot_id = 0;
-			//		int m;
-			//		for (m = 1; m < location_dot_num - 1; m++) {
-			//			if (dot_point[m] == 1) {
-			//				dot_id += int(pow(2, m - 1));
-			//			}
-			//		}
-			//		//homography_inv
-			//		vector<Point2f> after_points(4);
-			//		for (m = 0; m < 4; m++) {
-			//			after_points[m] = box[(m + id) % 4];
-			//		}
-			//		vector<Point2f>before_points{
-			//			Point2f(0 + point_buffer, 0 + point_buffer),
-			//			Point2f(location_width + point_buffer, 0 + point_buffer),
-			//			Point2f(location_width + point_buffer, location_height + point_buffer),
-			//			Point2f(0 + point_buffer, location_height + point_buffer)
-			//		};
-			//		cv::Mat M_inv(3, 3, CV_64FC1);
-			//		M_inv = getPerspectiveTransform(before_points, after_points);
-
-			//		for (m = 0; m < 4; m++) {
-			//			cv::Mat box_3d = (cv::Mat_<double>(3, 1) << box_a_sorted[m].x, box_a_sorted[m].y, 1);
-			//			//Mat box_3d(3, 1, CV_64FC1, { before_points[m].x, before_points[m].y, 1 });
-			//			cv::Mat box_a_after_each(3, 1, CV_64FC1);
-			//			box_a_after_each = M_inv * box_3d;
-			//			//cv::warpPerspective(box_3d[m], box_a_after_each, M_inv, box_a_after_each.size());
-			//			float x = float(box_a_after_each.at<double>(0, 0));
-			//			float y = float(box_a_after_each.at<double>(1, 0));
-			//			box_a_after[m].x = x;
-			//			box_a_after[m].y = y;
-			//			if (kakunin)
-			//				cv::circle(frame, Point(int(box_a_after_each.at<double>(0, 0)), int(box_a_after_each.at<double>(1, 0))), 5, Scalar(100, 100, 100), 5);
-			//		}
-			//		mtx_location.lock();
-			//		location_xy[dot_id].push_back(box_a_after);
-			//		mtx_location.unlock();
-			//		//printf("aaa");
-			//		//write each id in this point
-			//		if (kakunin) {
-			//			cv::putText(frame, to_string(dot_id),
-			//				Point(int(mean2f(&box_a_after[0], 4, 0).x), int(mean2f(&box_a_after[0], 4, 0).y)),
-			//				CV_FONT_HERSHEY_PLAIN, 5.0, Scalar(0, 255, 0), 5);
-			//		}
-			//	}
-			//}
-		//}
-	}
-	else {
-	for (mj = 0; mj < rects.size(); mj++) {
-		//LARGE_INTEGER tyoku_timer;
-		//QueryPerformanceCounter(&tyoku_timer);
-		int rows = frame_original.rows;
-		int cols = frame_original.cols;
-		float expand_ratio = EXPAND_RATIO;
-		const int location_dot_num = LOCATION_DOT_NUM;
-		int x_buffer = int(X_BUFFER * expand_ratio);//from rectangle's edge
-		int y_buffer = int(Y_BUFFER * expand_ratio); //from rectangle's edge
-		int space_x = int(SPACE_X * expand_ratio);
-		int rect_len = int(RECT_LEN * expand_ratio);
-		int location_width = x_buffer * 2 + space_x * (location_dot_num - 1) + rect_len;
-		int location_height = int(LOCATION_HEIGHT * expand_ratio);
-		int line_width = int(LINE_WIDTH * expand_ratio);
-
-		//other parameters
-		int point_buffer = int(POINT_BUFFER * expand_ratio); //used when searching in larger area and extract larger area of location point area
-		float outer_lower = OUTER_LOWER;
-		float outer_upper = OUTER_UPPER;
-		int dot_read_thre = DOT_READ_THRE;
-		int dot_read_area = int(DOT_READ_AREA * expand_ratio);
-
-		cv::RotatedRect rect = rects[mj];
+	void operator()() {
+		//LARGE_INTEGER hei_timer, hei1_timer;
+		//QueryPerformanceCounter(&hei_timer);
 		float area = rect.size.area();
 		vector<Point2f> rect_point(4);
 		vector<Point> rect_int_point(4);
@@ -856,26 +146,18 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 			wh_ratio = 1 / wh_ratio;
 		}
 		if (wh_ratio > 2.5) {
-			continue;
+			return;
 		}
-		//extract larger area
+		cv::Mat larger_area_grayImage(larger_area.size(), CV_8UC1);
+		cv::cvtColor(larger_area, larger_area_grayImage, CV_RGB2GRAY);
+		cv::Mat bin_larger_area(larger_area.size(), CV_8UC1);
+		cv::threshold(larger_area_grayImage, bin_larger_area, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
 		Point2f box[4];
 		rect.points(box);
 		Point2f max_point;
 		Point2f min_point;
 		max_point = max2f(box, 4, 0);
 		min_point = min2f(box, 4, 0);
-		float point_buffer_for_larger = point_buffer / expand_ratio * pow(outer_size / 220, 0.5);
-		int min_y = max(0, int(min_point.y - point_buffer_for_larger));
-		int max_y = min(rows, int(max_point.y + point_buffer_for_larger));
-		int min_x = max(0, int(min_point.x - point_buffer_for_larger));
-		int max_x = min(cols, int(max_point.x + point_buffer_for_larger));
-		cv::Rect larger_area_rect(min_x, min_y, max_x - min_x, max_y - min_y);
-		cv::Mat larger_area(frame_original, larger_area_rect);
-		cv::Mat larger_area_grayImage(larger_area.size(), CV_8UC1);
-		cv::cvtColor(larger_area, larger_area_grayImage, CV_RGB2GRAY);
-		cv::Mat bin_larger_area(larger_area.size(), CV_8UC1);
-		cv::threshold(larger_area_grayImage, bin_larger_area, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
 
 		bool flag_changed = false;
 		//find contours inlarger area
@@ -883,6 +165,8 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 		std::vector<Vec4i>hierarchy_in_larger;
 		cv::findContours(bin_larger_area, contours_in_larger, hierarchy_in_larger, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
 		int j;
+
+
 		for (j = 0; j < contours_in_larger.size(); j++) {
 			cv::RotatedRect rect_in_larger;
 			vector<Point> contour_in_larger;
@@ -1031,6 +315,553 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 			float space_x_mod = space_x * location_ratio;
 			float to_center_dst = (location_width / 2.0 - (x_buffer + rect_len / 2.0 + space_x * 2))*location_ratio;
 
+			vector<bool>dot_point(location_dot_num);
+
+			for (k = 0; k < location_dot_num; k++) {
+				dot_point[k] = 0;
+				int x = max(0, int(center_x - to_center_dst + space_x_mod * (k - 2) - dot_read_area));
+				int y = max(0, int(box_a_sorted[0].y + area_height / 2 - dot_read_area));
+				int width = 2 * dot_read_area;
+				int height = 2 * dot_read_area;
+				/*
+				if (x + width < dst_binImage.cols) {
+				x = min(x, dst_binImage.cols);
+				width = dst_binImage.cols - x;
+				}
+				if (y + height < dst_binImage.rows) {
+				y = min(y, dst_binImage.rows);
+				height = dst_binImage.rows - y;
+				}
+				*/
+				cv::Rect dst_rect(x,
+					y,
+					width,
+					height);
+				cv::Mat dst_area(dst_binImage, dst_rect);
+				//miru(dst_area);
+				double ha = cv::mean(dst_area).val[0];
+				if (cv::mean(dst_area).val[0] < double(dot_read_thre)) {
+					dot_point[k] = 1;
+				}
+
+			}
+			if (dot_point[0] == 1 && dot_point[location_dot_num - 1] == 0) {
+
+				box_a_after = vector<Point2f>(4);
+				//calc dot id
+				int dot_id = 0;
+				int m;
+				for (m = 1; m < location_dot_num - 1; m++) {
+					if (dot_point[m] == 1) {
+						dot_id += int(pow(2, m - 1));
+					}
+				}
+				//homography_inv
+				vector<Point2f> after_points(4);
+				for (m = 0; m < 4; m++) {
+					after_points[m] = box[(m + id) % 4];
+				}
+				vector<Point2f>before_points{
+					Point2f(0 + point_buffer, 0 + point_buffer),
+					Point2f(location_width + point_buffer, 0 + point_buffer),
+					Point2f(location_width + point_buffer, location_height + point_buffer),
+					Point2f(0 + point_buffer, location_height + point_buffer)
+				};
+				cv::Mat M_inv(3, 3, CV_64FC1);
+				M_inv = getPerspectiveTransform(before_points, after_points);
+
+				for (m = 0; m < 4; m++) {
+					cv::Mat box_3d = (cv::Mat_<double>(3, 1) << box_a_sorted[m].x, box_a_sorted[m].y, 1);
+					//Mat box_3d(3, 1, CV_64FC1, { before_points[m].x, before_points[m].y, 1 });
+					cv::Mat box_a_after_each(3, 1, CV_64FC1);
+					box_a_after_each = M_inv * box_3d;
+					//cv::warpPerspective(box_3d[m], box_a_after_each, M_inv, box_a_after_each.size());
+					float x = float(box_a_after_each.at<double>(0, 0));
+					float y = float(box_a_after_each.at<double>(1, 0));
+					box_a_after[m].x = x;
+					box_a_after[m].y = y;
+				}
+
+				location_id = dot_id;
+			}
+		}
+	}
+};
+
+
+void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
+	LARGE_INTEGER recognition_start;
+	LARGE_INTEGER now_timer, prev_timer;
+	QueryPerformanceCounter(&recognition_start);
+	prev_timer = recognition_start;
+	Mat show_img;
+	if (kakunin) {
+		cv::namedWindow("show", cv::WINDOW_AUTOSIZE);
+		imwrite("frame_dame.jpg", frame);
+		/*
+		Mat frame_for_select(int(frame.rows * 0.5), int(frame.cols * 0.5), frame.type());
+		cv::resize(frame, frame_for_select, frame_for_select.size());
+		namedWindow("frame", CV_WINDOW_AUTOSIZE);
+		cv::flip(frame_for_select, frame_for_select, -1);
+		cv::imshow("frame", frame_for_select);
+		waitKey(1);
+		//*/
+	}
+
+	
+
+	//frame.copyTo(frame_original);
+	Mat frame_original;
+	if (kakunin == true) {
+		frame_original = Mat(frame.rows, frame.cols, frame.type());
+		frame.copyTo(frame_original);
+	}
+	else {
+		frame_original = frame;
+	}
+	/*
+	imwrite("original.jpg", frame_original);
+	cout << CV_8UC3;
+	cout << frame.type();
+	//cv::Mat grayImage(frame.rows, frame.cols, CV_8UC1);
+	//*/
+
+	Mat grayImage;
+	cv::Mat binImage(frame.rows, frame.cols, CV_8UC1);
+	if (use_gpu) {
+		adaptiveThresholdGPU(frame, binImage, KERNEL, C_TEI);
+	}
+	else {
+		cv::cvtColor(frame, grayImage, CV_RGB2GRAY);
+		Timer(prev_timer, "グレー化");
+		cv::adaptiveThreshold(grayImage, binImage, 255, cv::ADAPTIVE_THRESH_MEAN_C, THRESH_BINARY, KERNEL, C_TEI);
+	}
+	//*
+	Mat kernel = cv::getStructuringElement(MORPH_RECT, Size(2,2));
+	/*cv::erode(binImage, binImage, kernel);
+	cv::dilate(binImage, binImage, kernel);*/
+	//*/
+	//cv::morphologyEx(binImage, binImage, MORPH_CLOSE, kernel, Point(-1,-1), 1);
+	//*
+	//cv::dilate(binImage, binImage, kernel);
+	cv::dilate(binImage, binImage, kernel);
+	cv::erode(binImage, binImage, kernel);
+	cv::erode(binImage, binImage, kernel);
+	//*/
+	//cv::erode(binImage, binImage, kernel);
+	//cv::erode(binImage, binImage, kernel);
+	//cv::erode(binImage, binImage, kernel);
+	
+	//imwrite("mybinImageha.jpg", binImage);
+	extern bool use_lc_moving;
+	Mat plus;
+	Mat minus;
+	/*if (use_lc_moving || 1) {
+		if (before_binImage.rows > 0) {
+			int mi = 0;
+			Mat sub(Size(binImage.size()), CV_8SC1);
+			sub = binImage - before_binImage;
+			plus = ~(binImage > before_binImage);
+			minus = ~(binImage < before_binImage);
+			cv::dilate(plus, plus, kernel);
+			cv::dilate(plus, plus, kernel);
+			cv::erode(plus, plus, kernel);
+			cv::erode(plus, plus, kernel);
+		}
+	}*/
+	/*before_binImage = binImage;*/
+
+	//*
+	if (kakunin) {
+		Mat otu_bin(frame.rows, frame.cols, CV_8UC1);
+		namedWindow("bin");
+		cv::cvtColor(frame, grayImage, CV_RGB2GRAY);
+		cv::threshold(grayImage, otu_bin, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+		imwrite("grey.jpg", grayImage);
+		imwrite("bin.jpg", binImage);
+		imwrite("bin_otu.jpg", otu_bin);
+		Mat binImageResized(frame.rows / 5, frame.cols / 5, CV_8UC1);
+		cv::resize(binImage, binImageResized, binImageResized.size());
+		imshow("bin", binImage);
+		if (plus.rows > 0) {
+			namedWindow("plus");
+			imshow("plus", plus);
+			imwrite("plus.jpg", plus);
+			waitKey(1);
+		}
+		cv::waitKey(1);
+	}
+	//*/
+	vector<vector<Point>> contours;
+	vector<Vec4i> hierarchy;
+
+	Timer(prev_timer, "2値化:");
+
+
+	cv::findContours(binImage, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
+	//cv::findContours(edgeImage, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
+	
+	if (plus.rows > 0) {
+		vector<vector<Point>> pluscontours;
+		vector<Vec4i> plushierarchy;
+		cv::findContours(plus, pluscontours, plushierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
+	}
+	Mat res_contours;
+	if (kakunin) {
+		frame.copyTo(res_contours);
+	}
+	if (kakunin) {
+		drawContours(res_contours, contours, -1, Scalar(255, 255, 0));
+	}
+	
+	Timer(prev_timer, "輪郭抽出");
+
+
+	vector<vector<vector<Point2f>>> location_xy(8);
+	std::mutex mtx_location;
+	int i;
+	int ss = 0;
+
+	vector<RotatedRect> rects;
+	int error_thresh = ERROR_THRESH;
+	int moving = 0, not_moving = 0, rect_count = 0;
+	extern bool use_lc_moving;
+	LARGE_INTEGER lc_prev, lc_now;
+	double sum_lccheck = 0;
+	for (i = 0; i < contours.size(); i++) {
+		vector<Point> contour = contours[i];
+		cv::RotatedRect rect = minAreaRect(contour);
+		float area = rect.size.area();
+		vector<Point2f> rect_point(4);
+		vector<Point> rect_int_point(4);
+		rect.points(&rect_point[0]);
+		int mi;
+		float outer_lower = OUTER_LOWER;
+		float outer_upper = OUTER_UPPER;
+		for (mi = 0; mi < 4; mi++) {
+			rect_int_point[mi] = Point((int)rect_point[mi].x, (int)rect_point[mi].y);
+		}
+		//cout << area << "\n";
+		if (outer_size * outer_lower < area && area < outer_size * outer_upper) {
+		//if(200 < area && area < 1500){
+			int idx = hierarchy[i][2];
+			if (idx != -1){
+				float wh_ratio = rect.size.width / rect.size.height;
+				if (wh_ratio < 1) {
+					wh_ratio = 1 / wh_ratio;
+				}
+				if (wh_ratio > 2.5) {
+					continue;
+				}
+				rect_count++;
+				if (kakunin) {
+					drawContours(res_contours, contours, i, Scalar(255, 0, 0));
+					cv::putText(res_contours, to_string(round(area * 100) / 100),
+						rect_int_point[0],
+						CV_FONT_HERSHEY_PLAIN, 1.0, Scalar(0, 0, 255), 1);
+				}
+
+				if (use_lc_moving) {
+					QueryPerformanceCounter(&lc_prev);
+					extern vector<vector<vector<Point2f>>> before_location_points;
+					int location_id = 0, nlocation = 0;
+					bool location_moved = true;
+					for (location_id = 0; location_id < before_location_points.size(); location_id++) {
+						for (nlocation = 0; nlocation < before_location_points[location_id].size(); nlocation++) {
+							vector<Point2f> before_rect = before_location_points[location_id][nlocation];
+							double dict = sum_d(before_rect, rect_point);
+							//cout << dict << endl;
+							if (dict < 20) {
+								not_moving++;
+								//cout << dict << endl;
+								location_xy[location_id].push_back(before_rect);
+								before_location_points[location_id].erase(before_location_points[location_id].begin() + nlocation);
+								if (kakunin) {
+									cv::putText(frame, to_string(location_id),
+										Point(int(mean2f(&before_rect[0], 4, 0).x), int(mean2f(&before_rect[0], 4, 0).y)),
+										CV_FONT_HERSHEY_PLAIN, 5.0, Scalar(255, 0, 0), 5);
+									cv::fillConvexPoly(frame, &vecPointToI(before_rect)[0], 4, Scalar(0, 0, 255));
+									cv::fillConvexPoly(frame, &rect_int_point[0], 4, Scalar(0, 255, 0));
+								}
+								goto contour_loopend;
+							}
+						}
+					}
+					{
+						moving++;
+						rects.push_back(rect);
+					}
+				contour_loopend:
+					QueryPerformanceCounter(&lc_now);
+					sum_lccheck += double(lc_now.QuadPart - lc_prev.QuadPart) * 1000 / freq.QuadPart;
+					continue;
+				}
+				else {
+					{
+						rects.push_back(rect);
+					}
+				}
+			}
+		}
+	}
+	if (kakunin) {
+		imwrite("res_con.jpg", res_contours);
+	}
+
+	if (use_lc_moving) {
+		zikken_output << "位置マーカ比較," << sum_lccheck << std::endl;
+		//cout << "位置マーカ比較," << sum_lccheck << std::endl;
+	}
+		
+	Timer(prev_timer, "輪郭の情報から位置マーカのある場所の推定");
+	//cout << rect_count << " " << moving << " " << not_moving << endl;
+	int mj;
+	extern bool iti_heiretu;
+
+	if (iti_heiretu) {
+		//やること　長方形抽出
+		int rows = frame_original.rows;
+		int cols = frame_original.cols;
+		vector<ReadLocationId> readLocation(rects.size());
+		for (mj = 0; mj < rects.size(); mj++) {
+			readLocation[mj].set(rects[mj], frame_original);
+			std::thread t(std::ref(readLocation[mj]));
+			t.join();
+			/*try {
+				
+			}
+			catch (std::exception &ex) {
+				std::cerr << ex.what() << std::endl;
+			}*/
+		}
+		for (mj = 0; mj < rects.size(); mj++) {
+			int id = readLocation[mj].getResult();
+			if (id >= 0) {
+				location_xy[id].push_back(readLocation[mj].getBoxAfter());
+			}
+			
+		}
+	}
+	else {
+	for (mj = 0; mj < rects.size(); mj++) {
+		//LARGE_INTEGER tyoku_timer;
+		//QueryPerformanceCounter(&tyoku_timer);
+		int rows = frame_original.rows;
+		int cols = frame_original.cols;
+		float expand_ratio = EXPAND_RATIO;
+		const int location_dot_num = LOCATION_DOT_NUM;
+		int x_buffer = int(X_BUFFER * expand_ratio);//from rectangle's edge
+		int y_buffer = int(Y_BUFFER * expand_ratio); //from rectangle's edge
+		int space_x = int(SPACE_X * expand_ratio);
+		int rect_len = int(RECT_LEN * expand_ratio);
+		int location_width = x_buffer * 2 + space_x * (location_dot_num - 1) + rect_len;
+		int location_height = int(LOCATION_HEIGHT * expand_ratio);
+		int line_width = int(LINE_WIDTH * expand_ratio);
+
+		//other parameters
+		int point_buffer = int(POINT_BUFFER * expand_ratio); //used when searching in larger area and extract larger area of location point area
+		float outer_lower = OUTER_LOWER;
+		float outer_upper = OUTER_UPPER;
+		int dot_read_thre = DOT_READ_THRE;
+		int dot_read_area = int(DOT_READ_AREA * expand_ratio);
+
+		cv::RotatedRect rect = rects[mj];
+		float area = rect.size.area();
+		vector<Point2f> rect_point(4);
+		vector<Point> rect_int_point(4);
+		rect.points(&rect_point[0]);
+		int mi;
+		for (mi = 0; mi < 4; mi++) {
+			rect_int_point[mi] = Point((int)rect_point[mi].x, (int)rect_point[mi].y);
+		}
+		
+		//extract larger area
+		Point2f box[4];
+		rect.points(box);
+		Point2f max_point;
+		Point2f min_point;
+		max_point = max2f(box, 4, 0);
+		min_point = min2f(box, 4, 0);
+		float point_buffer_for_larger = point_buffer / expand_ratio * pow(outer_size / 220, 0.5);
+		int min_y = max(0, int(min_point.y - point_buffer_for_larger));
+		int max_y = min(rows, int(max_point.y + point_buffer_for_larger));
+		int min_x = max(0, int(min_point.x - point_buffer_for_larger));
+		int max_x = min(cols, int(max_point.x + point_buffer_for_larger));
+		cv::Rect larger_area_rect(min_x, min_y, max_x - min_x, max_y - min_y);
+		cv::Mat larger_area(frame_original, larger_area_rect);
+		cv::Mat larger_area_grayImage(larger_area.size(), CV_8UC1);
+		cv::cvtColor(larger_area, larger_area_grayImage, CV_RGB2GRAY);
+		cv::Mat bin_larger_area(larger_area.size(), CV_8UC1);
+		cv::threshold(larger_area_grayImage, bin_larger_area, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+
+		if (kakunin) {
+			namedWindow("larger");
+			imshow("larger", bin_larger_area);
+			waitKey(1);
+		}
+
+		bool flag_changed = false;
+		//find contours inlarger area
+		std::vector<std::vector<Point>> contours_in_larger;
+		std::vector<Vec4i>hierarchy_in_larger;
+		cv::findContours(bin_larger_area, contours_in_larger, hierarchy_in_larger, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
+		int j;
+		for (j = 0; j < contours_in_larger.size(); j++) {
+			cv::RotatedRect rect_in_larger;
+			vector<Point> contour_in_larger;
+			contour_in_larger = contours_in_larger[j];
+			rect_in_larger = minAreaRect(contour_in_larger);
+			float area_in_larger = rect_in_larger.size.area();
+			Point2f box_in_larger[4];
+			rect_in_larger.points(box_in_larger);
+			if (outer_size * outer_lower < area_in_larger && area_in_larger < outer_size * outer_upper) {
+				int idx = hierarchy_in_larger[j][2];
+				if (idx != -1 || 1) {
+					int k;
+					for (k = 0; k < 4; k++) {
+						box[k] = Point2f(min_point.x - point_buffer_for_larger + box_in_larger[k].x,
+							min_point.y - point_buffer_for_larger + box_in_larger[k].y);
+					}
+					flag_changed = true;
+				}
+			}
+		}
+		//find candidate of left-top
+		vector<int> candidate;
+		for (j = 0; j < 4; j++) {
+			if (norm(box[j] - box[(j + 1) % 4]) > norm(box[(j + 1) % 4] - box[(j + 2) % 4])) {
+				candidate.push_back(j);
+			}
+		}
+
+		//read each location's id
+		for (j = 0; j < candidate.size(); j++) {
+			int id = candidate[j];
+			vector<Point2f> before_points;
+			int k;
+			for (k = 0; k < 4; k++) {
+				before_points.push_back(box[(k + id) % 4]);
+			}
+			RotatedRect before_points_rotatedrect;
+			before_points_rotatedrect = cv::minAreaRect(before_points);
+			Rect before_points_rect;
+			before_points_rect = before_points_rotatedrect.boundingRect();
+			if (before_points_rect.x < 0) {
+				before_points_rect.x = 0;
+			}
+			if (before_points_rect.y < 0) {
+				before_points_rect.y = 0;
+			}
+			if (before_points_rect.width + before_points_rect.x > cols) {
+				before_points_rect.width = cols - before_points_rect.x;
+			}
+			if (before_points_rect.height + before_points_rect.y > rows) {
+				before_points_rect.height = rows - before_points_rect.y;
+			}
+			for (k = 0; k < 4; k++) {
+				before_points[k].x -= larger_area_rect.x;
+				before_points[k].y -= larger_area_rect.y;
+			}
+
+			/*Mat before_points_area(larger_area, Rect(before_points_rect.tl() - larger_area_rect.tl(),
+				Size(before_points_rect.width, before_points_rect.height)));*/
+				//Mat before_points_area(frame_original, before_points_rect);
+			vector<Point2f> after_points{
+				Point2f(0 + point_buffer, 0 + point_buffer),
+				Point2f(location_width + point_buffer, 0 + point_buffer),
+				Point2f(location_width + point_buffer, location_height + point_buffer),
+				Point2f(0 + point_buffer, location_height + point_buffer)
+			};
+			/*
+			cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
+			cv::imshow("out", before_points_area);
+			cv::waitKey(1);
+			//*/
+			cv::Mat M = cv::getPerspectiveTransform(before_points, after_points);
+			cv::Mat dst(location_height + point_buffer * 2, location_width + point_buffer * 2, CV_8UC1);
+			cv::warpPerspective(larger_area, dst, M, dst.size());
+
+			cv::Mat dst_grayImage(dst.size(), CV_8UC1);
+			cv::Mat dst_binImage(dst.size(), CV_8UC1);
+			cv::cvtColor(dst, dst_grayImage, CV_RGB2GRAY);
+			cv::threshold(dst_grayImage, dst_binImage, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+			/*
+			cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
+			cv::imshow("out", dst_binImage);
+			cv::waitKey(1);
+			//*/
+			if (kakunin) {
+				namedWindow("iti");
+				imshow("iti", dst_binImage);
+				waitKey(1);
+			}
+			Point2f box_a_sorted[4];
+			if (flag_changed == false) {
+
+				Mat dst_copy(dst_binImage.size(), CV_8UC1);
+				dst_binImage.copyTo(dst_copy);
+				
+				
+
+				std::vector<std::vector<Point>> contours_a;
+				std::vector<Vec4i>hierarchy_a;
+				cv::findContours(dst_binImage, contours_a, hierarchy_a, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
+
+				//find contours again
+				for (k = 0; k < contours_a.size(); k++) {
+					RotatedRect rect_a = cv::minAreaRect(contours_a[k]);
+					Point2f box_a[4];
+					float area_a;
+					rect_a.points(box_a);
+					area_a = rect_a.size.area();
+					int idx_a = hierarchy_a[k][2];
+					float location_area_size = location_width * location_height;
+					//if (kakunin) cout << area_a << endl;
+					if ((idx_a != -1 || 1)
+						&& area_a > location_area_size * outer_lower
+						&& area_a < location_area_size * outer_upper) {
+						vector<vector<Point>> contour(1);
+						contour[0] = contours_a[k];
+						//cv::drawContours(frame, contour, 0, (0, 255, 255), 2);
+						//calc left-top
+						int l;
+						int box_left_top_idx;
+						for (l = 0; l < 4; l++) {
+							if (box_a[l].x < rect_a.center.x && box_a[l].y < rect_a.center.y) {
+								box_left_top_idx = l;
+								break;
+							}
+						}
+						for (l = 0; l < 4; l++) {
+							box_a_sorted[l] = box_a[(l + box_left_top_idx) % 4];
+						}
+						break;
+					}
+					else {
+						int l;
+						for (l = 0; l < 4; l++) {
+							box_a_sorted[l] = Point(0, 0);
+						}
+					}
+				}
+			}
+			else {
+				for (k = 0; k < 4; k++) {
+					box_a_sorted[k] = after_points[k];
+				}
+			}
+			if (box_a_sorted[1].x == 0) {
+				continue;
+			}
+
+			//read each point
+			float area_width = max2f(box_a_sorted, 4, 0).x - min2f(box_a_sorted, 4, 0).x;
+			float area_height = max2f(box_a_sorted, 4, 0).y - min2f(box_a_sorted, 4, 0).y;
+			float center_x = mean2f(box_a_sorted, 4, 0).x;
+			float location_ratio = float(area_width + area_height) / (location_width + location_height + line_width * 2);
+			float space_x_mod = space_x * location_ratio;
+			float to_center_dst = (location_width / 2.0 - (x_buffer + rect_len / 2.0 + space_x * 2))*location_ratio;
+
 			bool dot_point[location_dot_num];
 
 			for (k = 0; k < location_dot_num; k++) {
@@ -1099,9 +930,7 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 					if (kakunin)
 						cv::circle(frame, Point(int(box_a_after_each.at<double>(0, 0)), int(box_a_after_each.at<double>(1, 0))), 5, Scalar(100, 100, 100), 5);
 				}
-				mtx_location.lock();
 				location_xy[dot_id].push_back(box_a_after);
-				mtx_location.unlock();
 				//write each id in this point
 				if (kakunin) {
 					cv::putText(frame, to_string(dot_id),
@@ -1110,340 +939,16 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 				}
 			}
 		}
-		//Timer(tyoku_timer, "tyoku 1loop");
 
 	}
-	//for (mj = 0; mj < marker_contours.size(); mj++) {
-	//	float expand_ratio = EXPAND_RATIO;
-	//	const int location_dot_num = LOCATION_DOT_NUM;
-	//	int x_buffer = int(X_BUFFER * expand_ratio);//from rectangle's edge
-	//	int y_buffer = int(Y_BUFFER * expand_ratio); //from rectangle's edge
-	//	int space_x = int(SPACE_X * expand_ratio);
-	//	int rect_len = int(RECT_LEN * expand_ratio);
-	//	int location_width = x_buffer * 2 + space_x * (location_dot_num - 1) + rect_len;
-	//	int location_height = int(LOCATION_HEIGHT * expand_ratio);
-	//	int line_width = int(LINE_WIDTH * expand_ratio);
-
-	//	//other parameters
-	//	int point_buffer = int(POINT_BUFFER * expand_ratio); //used when searching in larger area and extract larger area of location point area
-	//	float outer_lower = OUTER_LOWER;
-	//	float outer_upper = OUTER_UPPER;
-	//	int dot_read_thre = DOT_READ_THRE;
-	//	int dot_read_area = int(DOT_READ_AREA * expand_ratio);
-	//	//Timer(prev_timer, "最初");
-	//	vector<Point> contour = marker_contours[mj];
-	//	//Timer(prev_timer, "contour取ってくる");
-	//	cv::RotatedRect rect = minAreaRect(contour);
-	//	//Timer(prev_timer, "minAreaRect特定");
-	//	float area = rect.size.area();
-	//	vector<Point2f> rect_point(4);
-	//	vector<Point> rect_int_point(4);
-	//	rect.points(&rect_point[0]);
-	//	int mi;
-	//	for (mi = 0; mi < 4; mi++) {
-	//		rect_int_point[mi] = Point((int)rect_point[mi].x, (int)rect_point[mi].y);
-	//	}
-	//	//Timer(prev_timer, "その他");
-	//	//if(100 < area && area < 3000){
-
-	//	/*
-	//	//cout << area << "\n";
-	//	cv::drawContours(frame, contours, i, Scalar(255, 0, 255), 1.0);
-	//	//cv::drawContours(frame, vector<vector<Point>>{rect_int_point}, 0, Scalar(0, 0, 255), 5.0);
-	//	cv::putText(frame, to_string(int(area)), contours[i][0], CV_FONT_HERSHEY_PLAIN, 5.0, Scalar(0, 128, 0), 3);
-	//	//*
-	//	show_img = cv::Mat(cv::Size(frame.cols / 5, frame.rows / 5), CV_8UC3);
-	//	cv::resize(frame, show_img, show_img.size());
-	//	cv::imshow("show", show_img);
-	//	cv::waitKey(1);
-	//	//*/
-	//	float wh_ratio = rect.size.width / rect.size.height;
-	//	if (wh_ratio < 1) {
-	//		wh_ratio = 1 / wh_ratio;
-	//	}
-	//	if (wh_ratio > 2.5) {
-	//		continue;
-	//	}
-
-	//	if (kakunin) {
-	//		cv::drawContours(frame, contours, i, Scalar(255, 0, 255), 1.0);
-	//		cv::drawContours(frame, vector<vector<Point>>{rect_int_point}, 0, Scalar(0, 255, 255), 5.0);
-	//		cv::putText(frame, to_string(int(area)), contours[i][0], CV_FONT_HERSHEY_PLAIN, 5.0, Scalar(0, 128, 255), 2.0);
-	//	}
-	//	//extract larger area
-	//	//Timer(prev_timer, "rect");
-	//	Point2f box[4];
-	//	rect.points(box);
-	//	Point2f max_point;
-	//	Point2f min_point;
-	//	max_point = max2f(box, 4, 0);
-	//	min_point = min2f(box, 4, 0);
-	//	float point_buffer_for_larger = point_buffer / expand_ratio * pow(outer_size / 220, 0.5);
-	//	int min_y = max(0, int(min_point.y - point_buffer_for_larger));
-	//	int max_y = min(frame_original.rows, int(max_point.y + point_buffer_for_larger));
-	//	int min_x = max(0, int(min_point.x - point_buffer_for_larger));
-	//	int max_x = min(frame_original.cols, int(max_point.x + point_buffer_for_larger));
-	//	cv::Rect larger_area_rect(min_x, min_y, max_x - min_x, max_y - min_y);
-	//	cv::Mat larger_area(frame_original, larger_area_rect);
-	//	cv::Mat larger_area_grayImage(larger_area.size(), CV_8UC1);
-	//	cv::cvtColor(larger_area, larger_area_grayImage, CV_RGB2GRAY);
-	//	cv::Mat bin_larger_area(larger_area.size(), CV_8UC1);
-	//	cv::threshold(larger_area_grayImage, bin_larger_area, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
-	//	/*
-	//	namedWindow("larger_area", CV_WINDOW_AUTOSIZE);
-	//	imshow("larger_area", frame_original);
-	//	waitKey(1);
-	//	//*/
-
-
-	//	//Timer(prev_timer, "larger_area");
-	//	//find contours inlarger area
-	//	bool flag_changed = false;
-
-	//	std::vector<std::vector<Point>> contours_in_larger;
-	//	std::vector<Vec4i>hierarchy_in_larger;
-	//	cv::findContours(bin_larger_area, contours_in_larger, hierarchy_in_larger, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
-	//	int j;
-	//	for (j = 0; j != contours_in_larger.size(); j++) {
-	//		cv::RotatedRect rect_in_larger;
-	//		vector<Point> contour_in_larger;
-	//		contour_in_larger = contours_in_larger[j];
-	//		rect_in_larger = minAreaRect(contour_in_larger);
-	//		float area_in_larger = rect_in_larger.size.area();
-	//		Point2f box_in_larger[4];
-	//		rect_in_larger.points(box_in_larger);
-	//		if (outer_size * outer_lower < area_in_larger && area_in_larger < outer_size * outer_upper) {
-	//			int idx = hierarchy_in_larger[j][2];
-	//			if (idx != -1) {
-	//				int k;
-	//				for (k = 0; k < 4; k++) {
-	//					box[k] = Point2f(min_point.x - point_buffer_for_larger + box_in_larger[k].x,
-	//						min_point.y - point_buffer_for_larger + box_in_larger[k].y);
-	//				}
-	//				flag_changed = true;
-	//			}
-	//		}
-	//	}
-
-
-	//	//Timer(prev_timer, "find contours larger area");
-	//	//find candidate of left-top
-	//	vector<int> candidate;
-	//	for (j = 0; j < 4; j++) {
-	//		if (norm(box[j] - box[(j + 1) % 4]) > norm(box[(j + 1) % 4] - box[(j + 2) % 4])) {
-	//			candidate.push_back(j);
-	//		}
-	//	}
-
-	//	int find_candidate_of_lt;
-	//	//Timer(prev_timer, "lefttop");
-	//	//read each location's id
-	//	for (j = 0; j < candidate.size(); j++) {
-	//		/*
-	//		cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
-	//		cv::imshow("out", frame_original);
-	//		cv::waitKey(1);
-	//		*/
-
-	//		int id = candidate[j];
-	//		vector<Point2f> before_points;
-	//		int k;
-	//		for (k = 0; k < 4; k++) {
-	//			before_points.push_back(box[(k + id) % 4]);
-	//		}
-	//		RotatedRect before_points_rotatedrect;
-	//		before_points_rotatedrect = minAreaRect(before_points);
-	//		Rect before_points_rect;
-	//		before_points_rect = before_points_rotatedrect.boundingRect();
-	//		if (before_points_rect.x < 0) {
-	//			before_points_rect.x = 0;
-	//		}
-	//		if (before_points_rect.y < 0) {
-	//			before_points_rect.y = 0;
-	//		}
-	//		if (before_points_rect.width + before_points_rect.x > frame_original.cols) {
-	//			before_points_rect.width = frame_original.cols - before_points_rect.x;
-	//		}
-	//		if (before_points_rect.height + before_points_rect.y > frame_original.rows) {
-	//			before_points_rect.height = frame_original.rows - before_points_rect.y;
-	//		}
-
-	//		//Mat before_points_area(frame_original, before_points_rect);
-	//		Mat before_points_area(larger_area, Rect(before_points_rect.tl() - larger_area_rect.tl(),
-	//			Size(before_points_rect.width, before_points_rect.height)));
-	//		vector<Point2f> after_points{
-	//			Point2f(0 + point_buffer, 0 + point_buffer),
-	//			Point2f(location_width + point_buffer, 0 + point_buffer),
-	//			Point2f(location_width + point_buffer, location_height + point_buffer),
-	//			Point2f(0 + point_buffer, location_height + point_buffer)
-	//		};
-	//		/*
-	//		cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
-	//		cv::imshow("out", before_points_area);
-	//		cv::waitKey(1);
-	//		//*/
-	//		cv::Mat M = cv::getPerspectiveTransform(before_points, after_points);
-	//		cv::Mat dst(location_height + point_buffer * 2, location_width + point_buffer * 2, frame_original.type());
-	//		cv::warpPerspective(frame_original, dst, M, dst.size());
-
-	//		cv::Mat dst_grayImage(dst.size(), CV_8UC1);
-	//		cv::Mat dst_binImage(dst.size(), CV_8UC1);
-	//		cv::cvtColor(dst, dst_grayImage, CV_RGB2GRAY);
-	//		cv::threshold(dst_grayImage, dst_binImage, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
-	//		/*
-	//		cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
-	//		cv::imshow("out", dst_binImage);
-	//		cv::waitKey(1);
-	//		//*/
-
-	//		Point2f box_a_sorted[4];
-	//		if (flag_changed == false) {
-
-	//			Mat dst_copy(dst_binImage.size(), CV_8UC1);
-	//			dst_binImage.copyTo(dst_copy);
-
-	//			std::vector<std::vector<Point>> contours_a;
-	//			std::vector<Vec4i>hierarchy_a;
-	//			cv::findContours(dst_binImage, contours_a, hierarchy_a, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
-
-	//			//find contours again
-	//			for (k = 0; k < contours_a.size(); k++) {
-	//				RotatedRect rect_a = cv::minAreaRect(contours_a[k]);
-	//				Point2f box_a[4];
-	//				float area_a;
-	//				rect_a.points(box_a);
-	//				area_a = rect_a.size.area();
-	//				int idx_a = hierarchy_a[k][2];
-	//				float location_area_size = location_width * location_height;
-	//				if (idx_a != -1
-	//					&& area_a > location_area_size * outer_lower
-	//					&& area_a < location_area_size * outer_upper) {
-	//					vector<vector<Point>> contour(1);
-	//					contour[0] = contours_a[k];
-	//					//cv::drawContours(frame, contour, 0, (0, 255, 255), 2);
-	//					//calc left-top
-	//					int l;
-	//					int box_left_top_idx;
-	//					for (l = 0; l < 4; l++) {
-	//						if (box_a[l].x < rect_a.center.x && box_a[l].y < rect_a.center.y) {
-	//							box_left_top_idx = l;
-	//							break;
-	//						}
-	//					}
-	//					for (l = 0; l < 4; l++) {
-	//						box_a_sorted[l] = box_a[(l + box_left_top_idx) % 4];
-	//					}
-	//				}
-	//				else {
-	//					int l;
-	//					for (l = 0; l < 4; l++) {
-	//						box_a_sorted[l] = Point(0, 0);
-	//					}
-	//				}
-	//			}
-	//		}
-	//		else {
-	//			for (k = 0; k < 4; k++) {
-	//				box_a_sorted[k] = after_points[k];
-	//			}
-	//		}
-	//		if (box_a_sorted[1].x == 0) {
-	//			continue;
-	//		}
-
-	//		//read each point
-	//		float area_width = max2f(box_a_sorted, 4, 0).x - min2f(box_a_sorted, 4, 0).x;
-	//		float area_height = max2f(box_a_sorted, 4, 0).y - min2f(box_a_sorted, 4, 0).y;
-	//		float center_x = mean2f(box_a_sorted, 4, 0).x;
-	//		float location_ratio = float(area_width + area_height) / (location_width + location_height + line_width * 2);
-	//		float space_x_mod = space_x * location_ratio;
-	//		float to_center_dst = (location_width / 2.0 - (x_buffer + rect_len / 2.0 + space_x * 2))*location_ratio;
-
-	//		bool dot_point[location_dot_num];
-
-	//		for (k = 0; k < location_dot_num; k++) {
-	//			dot_point[k] = 0;
-	//			int x = max(0, int(center_x - to_center_dst + space_x_mod * (k - 2) - dot_read_area));
-	//			int y = max(0, int(box_a_sorted[0].y + area_height / 2 - dot_read_area));
-	//			int width = 2 * dot_read_area;
-	//			int height = 2 * dot_read_area;
-	//			/*
-	//			if (x + width < dst_binImage.cols) {
-	//			x = min(x, dst_binImage.cols);
-	//			width = dst_binImage.cols - x;
-	//			}
-	//			if (y + height < dst_binImage.rows) {
-	//			y = min(y, dst_binImage.rows);
-	//			height = dst_binImage.rows - y;
-	//			}
-	//			*/
-	//			cv::Rect dst_rect(x,
-	//				y,
-	//				width,
-	//				height);
-	//			cv::Mat dst_area(dst_binImage, dst_rect);
-	//			//miru(dst_area);
-	//			double ha = cv::mean(dst_area).val[0];
-	//			if (cv::mean(dst_area).val[0] < double(dot_read_thre)) {
-	//				dot_point[k] = 1;
-	//			}
-
-	//		}
-	//		if (dot_point[0] == 1 && dot_point[location_dot_num - 1] == 0) {
-	//			vector<Point2f>  box_a_after(4);
-
-	//			//calc dot id
-	//			int dot_id = 0;
-	//			int m;
-	//			for (m = 1; m < location_dot_num - 1; m++) {
-	//				if (dot_point[m] == 1) {
-	//					dot_id += int(pow(2, m - 1));
-	//				}
-	//			}
-	//			//homography_inv
-	//			vector<Point2f> after_points(4);
-	//			for (m = 0; m < 4; m++) {
-	//				after_points[m] = box[(m + id) % 4];
-	//			}
-	//			vector<Point2f>before_points{
-	//				Point2f(0 + point_buffer, 0 + point_buffer),
-	//				Point2f(location_width + point_buffer, 0 + point_buffer),
-	//				Point2f(location_width + point_buffer, location_height + point_buffer),
-	//				Point2f(0 + point_buffer, location_height + point_buffer)
-	//			};
-	//			cv::Mat M_inv(3, 3, CV_64FC1);
-	//			M_inv = getPerspectiveTransform(before_points, after_points);
-
-	//			for (m = 0; m < 4; m++) {
-	//				cv::Mat box_3d = (cv::Mat_<double>(3, 1) << box_a_sorted[m].x, box_a_sorted[m].y, 1);
-	//				//Mat box_3d(3, 1, CV_64FC1, { before_points[m].x, before_points[m].y, 1 });
-	//				cv::Mat box_a_after_each(3, 1, CV_64FC1);
-	//				box_a_after_each = M_inv * box_3d;
-	//				//cv::warpPerspective(box_3d[m], box_a_after_each, M_inv, box_a_after_each.size());
-	//				float x = float(box_a_after_each.at<double>(0, 0));
-	//				float y = float(box_a_after_each.at<double>(1, 0));
-	//				box_a_after[m].x = x;
-	//				box_a_after[m].y = y;
-	//				if (kakunin)
-	//					cv::circle(frame, Point(int(box_a_after_each.at<double>(0, 0)), int(box_a_after_each.at<double>(1, 0))), 5, Scalar(100, 100, 100), 5);
-	//			}
-	//			mtx_location.lock();
-	//			location_xy[dot_id].push_back(box_a_after);
-	//			mtx_location.unlock();
-	//			//printf("aaa");
-	//			//write each id in this point
-	//			if (kakunin) {
-	//				cv::putText(frame, to_string(dot_id),
-	//					Point(int(mean2f(&box_a_after[0], 4, 0).x), int(mean2f(&box_a_after[0], 4, 0).y)),
-	//					CV_FONT_HERSHEY_PLAIN, 5.0, Scalar(0, 255, 0), 5);
-	//			}
-	//		}
-	//	}
-	//	//Timer(prev_timer, "read location id");
-	//}
 	}
 
 	postits->location_points = location_xy;
+	zikken_output << "探索位置マーカ数=" << rects.size() << endl;
+	Timer(prev_timer, "recognition 位置マーカを読み取る");
+	LARGE_INTEGER iti_timer;
+	QueryPerformanceCounter(&iti_timer);
+
 
 	float expand_ratio = EXPAND_RATIO;
 
@@ -1495,12 +1000,6 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 	cv::imshow("show", show_img);
 	cv::waitKey(1);
 	//*/
-	cv::findContours(binImage, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
-
-	zikken_output << "探索位置マーカ数=" << rects.size() << endl;
-	Timer(prev_timer, "recognition 位置マーカ探索:");
-	LARGE_INTEGER iti_timer;
-	QueryPerformanceCounter(&iti_timer);
 
 	//cout << omp_get_thread_num() << endl;
 	//make from to vector
@@ -1573,7 +1072,7 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 						Point2f dst_point = mean2f(&location_xy[m][n][0], 4, 0) + vec_from_to[m][i].x * right_vector + vec_from_to[m][i].y * below_vector;
 						for (j = 0; j < location_xy[i].size(); j++) {
 							if (location_xy[i][j][0].x != -1 &&
-								norm(mean2f(&location_xy[i][j][0], 4, 0) - dst_point)  < error_thresh * (pow(double(outer_size) / 220, 0.5))) {
+								norm(mean2f(&location_xy[i][j][0], 4, 0) - dst_point)  < 2*error_thresh * (pow(double(outer_size) / 220, 0.5))) {
 								location_points[i] = mean2f(&location_xy[i][j][0], 4, 0);
 								vector<int> point_delete{ i,j };
 								points_to_delete.push_back(point_delete);
@@ -1603,7 +1102,8 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 		}
 	}
 
-	Timer(iti_timer, "付箋4角取得");
+	Timer(iti_timer, "付箋のある位置の推定");
+	
 
 	vector<Point2f> dst_points_original
 	{ Point2f(horizon_x_buffer + location_width / 2, horizon_y_buffer + location_height / 2),
@@ -1627,17 +1127,19 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 	extern vector<PostitPoint> before_postits_points;
 	moving = 0;
 	int notmoving = 0;
+	double sum_idcheck = 0;
+	LARGE_INTEGER id_prev, id_now;
 	for (m = 0; m < location_points_all.size(); m++) {
 		
 		vector<Point2f> points = location_points_all[m];
 		vector<Point2f> src_point;
-		vector<Point2f> dst_point;
+		vector<Point2f> dst_point_mi;
 		vector<Point2f> dst_point_larger;
 		int i;
 		for (i = 0; i < points.size(); i++) {
 			if (points[i].x != 0 && points[i].y != 0) {
 				src_point.push_back(points[i]);
-				dst_point.push_back(dst_points_original[i]);
+				dst_point_mi.push_back(dst_points_original[i]);
 				dst_point_larger.push_back(dst_points_original_larger[i]);
 			}
 
@@ -1645,7 +1147,7 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 
 		// 付箋のある座標を記録する
 		Mat M_inv(3, 3, CV_64FC1);
-		M_inv = cv::findHomography(dst_point, src_point, CV_RANSAC, 3);
+		M_inv = cv::findHomography(dst_point_mi, src_point, CV_RANSAC, 3);
 		vector<Mat> postit_area;
 		//box_3d = (cv::Mat_<double>(3, 1) << box_a_sorted[m].x, box_a_sorted[m].y, 1);
 		vector<vector<double>> data{ { 0, 0, 1 } ,{ double(postit_width), 0, 1 },
@@ -1662,23 +1164,33 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 		}
 		int n;
 
-		bool moving_postit = true;
-		for (n = 0; n < before_postits_points.size(); n++) {
-			double d = sum_d(before_postits_points[n].points, postit_points_each);
-			if (d < 10) {
-				cout << d << endl;
-				//extern vector<int>postit_ids;
-				PostitPoint postitpoint;
-				postitpoint.id = before_postits_points[n].id;
-				postitpoint.points = postit_points_each;
-				postits->postitpoints.push_back(postitpoint);
-				moving_postit = false;
-				notmoving++;
-				break;
-			}
+		if (kakunin) {
+			vector<Point> points = vecPointToI(postit_points_each);
+			cv::polylines(frame, points, true, cv::Scalar(0, 0, 255), 2);
 		}
-		if (!moving_postit) continue;
-		
+
+		extern bool use_id_moving;
+		if (use_id_moving) {
+			QueryPerformanceCounter(&id_prev);
+			bool moving_postit = true;
+			for (n = 0; n < before_postits_points.size(); n++) {
+				double d = sum_d(before_postits_points[n].points, postit_points_each);
+				if (d < 10) {
+					//cout << d << endl;
+					//extern vector<int>postit_ids;
+					PostitPoint postitpoint;
+					postitpoint.id = before_postits_points[n].id;
+					postitpoint.points = postit_points_each;
+					postits->postitpoints.push_back(postitpoint);
+					moving_postit = false;
+					notmoving++;
+					break;
+				}
+			}
+			QueryPerformanceCounter(&id_now);
+			sum_idcheck += double(id_now.QuadPart - id_prev.QuadPart) * 1000 / freq.QuadPart;
+			if (!moving_postit) continue;
+		}
 
 		//id分析のため付箋の画像を記録
 		cv::Mat M = cv::findHomography(src_point, dst_point_larger, CV_RANSAC, 3);
@@ -1710,10 +1222,14 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 		cv::imwrite("kekka.jpg", frame);
 		cv::resize(frame, show_img, show_img.size());
 		cv::imshow("show", show_img);
+		cv::imwrite("show_result.jpg", frame);
 		cv::waitKey(1);
 	}
 	zikken_output << "付箋発見数=" << count << endl;
-
+	if (use_id_moving) {
+		zikken_output << "付箋位置比較," << sum_idcheck << endl;
+		//cout << "付箋位置比較," << sum_idcheck << endl;
+	}
 	Timer(prev_timer, "recognition 付箋領域抽出:");
 	return;
 }
@@ -1758,7 +1274,10 @@ int read_bit(Mat postit, int first_x, int first_y, bool horizon, int outer_size)
 	bool find_grand_child = FIND_GRAND_CHILD;
 
 	if (kakunin) {
-		cv::namedWindow("search_area", CV_WINDOW_AUTOSIZE);
+		/*cv::namedWindow("search_area", CV_WINDOW_AUTOSIZE);
+		cv::namedWindow("apostit");
+		imshow("apostit", postit);
+		waitKey(1);*/
 	}
 	//return val
 	int sum = 0;
@@ -1885,7 +1404,10 @@ int read_bit(Mat postit, int first_x, int first_y, bool horizon, int outer_size)
 
 		Mat search_area(postit, Rect(min_x, min_y, max_x - min_x, max_y - min_y));
 		Mat search_area_for_contours;
-		//imshow("search_area", search_area);
+		if (kakunin) {
+			//imshow("search_area", search_area);
+			//waitKey(1);
+		}
 		search_area.copyTo(search_area_for_contours);
 		vector<vector<Point>> contours;
 		std::vector<Vec4i>hierarchy;
@@ -1971,6 +1493,7 @@ int read_bit(Mat postit, int first_x, int first_y, bool horizon, int outer_size)
 		}
 		return sum;
 	}
+	int mi = 0;
 	return 100;
 }
 
@@ -2006,6 +1529,11 @@ vector<int>readDots(Mat postit, int outer_size) {
 
 	vector<int> bit_array(15, 0);
 	outer_size = int(1800 * pow(double(expand_ratio), 2.0));
+	if (kakunin) {
+		/*namedWindow("ta");
+		imshow("ta", postit);
+		waitKey(1);*/
+	}
 	//draw upper left and lower left
 	int start_left = horizon_x_buffer + location_width + rect_rect_space_horizon;
 	bit_array[0] = read_bit(postit, start_left, horizon_y_buffer, true, outer_size);

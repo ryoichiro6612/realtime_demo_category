@@ -14,6 +14,11 @@
 #include <opencv2/core/core.hpp>  
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/core/cuda.hpp>
+#include <opencv2/cudaimgproc.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv_lib.hpp>
+#include <opencv2/cudafilters.hpp>
 
 #include "schifra_galois_field.hpp"
 #include "schifra_galois_field_polynomial.hpp"
@@ -34,12 +39,16 @@ using namespace cv;
 #include "post_util.h"
 #include "realtime_demo_category.h"
 #include "zikken_state.h"
+#include "flir_camera.h"
+#include "gpu_image.h"
 
 bool iti_heiretu;
 bool id_heiretu;
 bool use_gpu;
 bool camera_heiretu;
-bool use_moving;
+bool use_lc_moving;
+bool use_id_moving;
+bool flir_camera;
 std::ofstream zikken_output;
 LARGE_INTEGER freq;
 vector<vector<vector<Point2f>>> before_location_points;
@@ -203,28 +212,63 @@ void cameraCapture(Mat &frame) {
 	}
 }
 void testCamera(VideoCapture &cap) {
-	VideoWriter writer(".\datas\zikken.wmv", CV_FOURCC('M', 'J', 'P', 'G'), 15.0, Size(2592, 1944));
+	VideoWriter writer;
 	Mat frame;
+	Spinnaker::CameraPtr cam1;
+	Spinnaker::SystemPtr system1;
+	ImagePtr converted;
 	cv::namedWindow("test");
+	if (flir_camera) {
+		SetCamera(cam1, system1);
+		writer = VideoWriter("./datas/zikken121250flir.wmv", CV_FOURCC('W', 'M', 'V', '1'), 30.0, Size(4000, 3000));
+	}
+	else {
+		cap = VideoCapture(0);
+		cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
+		cap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
+		writer = VideoWriter(".\datas\zikken1211web.wmv", CV_FOURCC('W', 'M', 'V', '1'), 15.0, Size(2592, 1944));
+	}
 	int count = 0;
 	while (1) {
 		LARGE_INTEGER timer1, timer2;
 		QueryPerformanceCounter(&timer1);
-		cap >> frame;
+		if (flir_camera) {
+			GetImage(cam1, converted);
+			ImageToMat(converted, frame);
+		}
+		else {
+			cap >> frame;
+		}
 		QueryPerformanceCounter(&timer2);
-		cout << "capture:" << double(timer2.QuadPart - timer1.QuadPart)*1000.0 / freq.QuadPart << "ms" << endl;
+		//cout << "capture:" << double(timer2.QuadPart - timer1.QuadPart)*1000.0 / freq.QuadPart << "ms" << endl;
 		imshow("test", frame);
 		if (count >= 10) {
 			writer << frame;
 		}
 		count++;
-		waitKey(66);
-		if (count >= NTEST + 10)break;
+		waitKey(1);
+		if (count >= NTEST + 10) {
+			if (flir_camera) {
+				FinishCamera(cam1, system1);
+			}
+			//break;
+		}
 	}
 }
 
+void printZikkenState(ofstream &out) {
+	out << "位置マーカ並列化|" << iti_heiretu << endl;
+	out << "idマーカ並列化|" << iti_heiretu << endl;
+	out << "gpuでの画像処理|" << use_gpu << endl;
+	out << "画像取得の別スレッド化|" << camera_heiretu << endl;
+	out << "位置マーカの動きを使う|" << use_lc_moving << endl;
+	out << "idマーカの動きを使う|" << use_id_moving << endl;
+	return;
+}
+
 void realtimeDemoCategory(int argc, char * argv[]) {
-	int outer_size = 350;
+	printZikkenState();
+	int outer_size = OUTER_SIZE;
 	int fps = 1;
 	bool skipmode = true;
 
@@ -239,15 +283,37 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 	}
 	namedWindow("projection", CV_WINDOW_AUTOSIZE);
 
-	//*usb camera use
-	//video reader and writer
-	cv::VideoCapture cap("zikken.wmv");
-	//cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
-	//cap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
-	if (!cap.isOpened()) {
-		cout << "cideo cannot open";
+	CameraPtr pCam;
+	SystemPtr system;
+	ImagePtr camImage;
+	cv::VideoCapture cap;
+	if (flir_camera) {
+		SetCamera(pCam, system);
+		GetImage(pCam, camImage);
+		ImageToMat(camImage, frame);
 	}
-	cap >> frame;
+	else {
+		//*usb camera use
+		//video reader and writer
+		cap = VideoCapture("./datas/zikken1211.wmv");
+		//cap = VideoCapture(0);
+		//cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
+		//cap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
+		//cap.set(CV_CAP_PROP_BUFFERSIZE, 3);
+		if (!cap.isOpened()) {
+			cout << "cideo cannot open";
+		}
+		while (1) {
+			cap >> frame;
+			if (frame.rows != 0) {
+				break;
+			}
+		}
+		
+		//namedWindow("video");
+		//imshow("video", frame);
+		//waitKey(1);
+	}
 
 
 	cout << frame.rows << endl;
@@ -305,6 +371,7 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 
 	while (1) {
 		zikken_output << "progress  " << std::to_string(int(timer_count / fps) / 60) << ":" << std::to_string((timer_count / fps) % 60) << "\n";
+		cout << "progress  " << std::to_string(int(timer_count / fps) / 60) << ":" << std::to_string((timer_count / fps) % 60) << "\n";
 		LARGE_INTEGER prev_timer;
 
 		if (timer_count == NTEST) {
@@ -312,12 +379,17 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 		}
 		//*usb camera capture frame
 		QueryPerformanceCounter(&prev_timer);
-		cap >> frame;
+		if (flir_camera) {
+			GetImage(pCam, camImage);
+			ImageToMat(camImage, frame);
+		}
+		else {
+			cap >> frame;
+		}
 		if (!frame.cols) {
 			break;
-
 		}
-		Timer(prev_timer, string("camera capture"));
+		Timer(prev_timer, string("カメラからの画像取得"));
 		//extract only desk_area
 		Mat frame_deskarea(frame, Rect((int)desk_area[0].x, (int)desk_area[0].y,
 			(int)((desk_area[1] - desk_area[0]).x), (int)(desk_area[1] - desk_area[0]).y));
@@ -326,25 +398,47 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 
 		PostitResult postits;
 		getPostits(&postits, frame_deskarea, outer_size);
-		Timer(prev_timer, "recognition");
 
 		int i, j;
 		//read postit's id and save
 
-		vector<PostitPoint> result;
+		int idx = 0;
 		for (i = 0; i < analyzing_images.size(); i++) {
-			Mat postit_image_analyzing = analyzing_images[i];
+			while (postits.postitpoints[idx].id >= 0) {
+				idx++;
+			}
+			Mat kernel = cv::getStructuringElement(MORPH_RECT, Size(2, 2));
+			Mat postit_image_analyzing;
+			cv::dilate(analyzing_images[i], postit_image_analyzing, kernel);
+			if (kakunin) {
+				//*
+				namedWindow("analyzing");
+				imshow("analyzing", analyzing_images[i]);
+				waitKey(1);
+				//*/
+			}
 			vector<int> bit_array = readDots(postit_image_analyzing, outer_size);
 			int result_num = -1;
 			result_num = reedsolomonDecode(bit_array);
-			postits.postitpoints[postits.postitpoints.size() - analyzing_images.size() + i].id = result_num;
+			postits.postitpoints[idx].id = result_num;
 		}
 		analyzing_images.clear();
-		before_postits_points = postits.postitpoints;
+		//*
+		Timer(prev_timer, "ID認識");
+		if (use_id_moving) {
+			before_postits_points = postits.postitpoints;
+		}
+		if (use_lc_moving) {
+			before_location_points = postits.location_points;
+		}
+		//*/
 		postit_points = postits.postitpoints;
-		Timer(prev_timer, "id recognition");
-
-		for (i = 0; i < postits.postitpoints.size(); i++) {
+		int npostits = postit_points.size();
+		Timer(prev_timer, "前の情報を記録");
+		for (i = 0; i < 256; i++) {
+			postit_saved[i].show = false;
+		}
+		for (i = 0; i < npostits; i++) {
 			int result_num = postits.postitpoints[i].id;
 
 			//save postit image
@@ -474,26 +568,119 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 			break;
 		}
 
-		Timer(prev_timer, "add information");
+		Timer(prev_timer, "後処理");
 		timer_count++;
 	}
+	if (flir_camera) {
+		FinishCamera(pCam, system);
+	}
 }
+
 int main(int argc, char * argv[])
 {
-	/*cv::VideoCapture testcap(0);
-	testcap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
-	testcap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
+	/*
+	Spinnaker::CameraPtr cam1;
+	Spinnaker::SystemPtr system1;
+	SetCamera(cam1, system1);
+	ImagePtr converted;
+	Mat cameraImage;
+	while (1) {
+		GetImage(cam1, converted);
+		ImageToMat(converted, cameraImage);
+	}
+	FinishCamera(cam1, system1);
+	return 0;
+	//*/
+	/*
+	QueryPerformanceFrequency(&freq);
+	cv::VideoCapture testcap;
+	
+	flir_camera = true;
 	testCamera(testcap);
-	return 0;*/
+	return 0;
+	//*/
+	string fname;
+
 	iti_heiretu = false;
 	id_heiretu = false;
 	use_gpu = false;
 	camera_heiretu = false;
-	use_moving = true;
-	string fname = string("./datas/csv/tyoku") + string(argv[1]) + ".log";
+	use_lc_moving = false;
+	use_id_moving = false;
+	flir_camera = false;
+	fname = string("./datas/csv/1213_1") + ".log";
 	zikken_output = ofstream(fname);
 	QueryPerformanceFrequency(&freq);
 	realtimeDemoCategory(argc, argv);
+
+	iti_heiretu = true;
+	id_heiretu = false;
+	use_gpu = false;
+	camera_heiretu = false;
+	use_lc_moving = false;
+	use_id_moving = false;
+	fname = string("./datas/csv/1213_2") + ".log";
+	zikken_output = ofstream(fname);
+	QueryPerformanceFrequency(&freq);
+	realtimeDemoCategory(argc, argv);
+
+	iti_heiretu = false;
+	id_heiretu = false;
+	use_gpu = false;
+	camera_heiretu = false;
+	use_lc_moving = true;
+	use_id_moving = true;
+	fname = string("./datas/csv/1213_3") + ".log";
+	zikken_output = ofstream(fname);
+	QueryPerformanceFrequency(&freq);
+	realtimeDemoCategory(argc, argv);
+
+	iti_heiretu = false;
+	id_heiretu = false;
+	use_gpu = true;
+	camera_heiretu = false;
+	use_lc_moving = false;
+	use_id_moving = false;
+	fname = string("./datas/csv/1213_4") + ".log";
+	zikken_output = ofstream(fname);
+	QueryPerformanceFrequency(&freq);
+	realtimeDemoCategory(argc, argv);
+
+	iti_heiretu = false;
+	id_heiretu = false;
+	use_gpu = true;
+	camera_heiretu = false;
+	use_lc_moving = true;
+	use_id_moving = true;
+	fname = string("./datas/csv/1213_5") + ".log";
+	zikken_output = ofstream(fname);
+	QueryPerformanceFrequency(&freq);
+	realtimeDemoCategory(argc, argv);
+
+	iti_heiretu = true;
+	id_heiretu = false;
+	use_gpu = true;
+	camera_heiretu = true;
+	use_lc_moving = true;
+	use_id_moving = true;
+	fname = string("./datas/csv/1213_6") + ".log";
+	zikken_output = ofstream(fname);
+	QueryPerformanceFrequency(&freq);
+	realtimeDemoCategory(argc, argv);
+	return 0;
+
+	iti_heiretu = true;
+	id_heiretu = true;
+	use_gpu = true;
+	camera_heiretu = false;
+	use_lc_moving = true;
+	use_id_moving = true;
+	fname = string("./datas/csv/1211_7") + ".log";
+	zikken_output = ofstream(fname);
+	QueryPerformanceFrequency(&freq);
+	realtimeDemoCategory(argc, argv);
+
+	
 	return 0;
 	iti_heiretu = true;
 	fname = string("./datas/csv/hei") + string(argv[1]) + ".log";
@@ -1305,7 +1492,7 @@ int reedsolomonDecode(vector<int> bit_array) {
 	/* Finite Field Parameters */
 	const std::size_t field_descriptor = 8;
 	const std::size_t generator_polynomial_index = 0;
-	const std::size_t generator_polynomial_root_count = 14;
+	const std::size_t generator_polynomial_root_count = 15;
 
 	/* Reed Solomon Code Parameters */
 	const std::size_t code_length = 15;
@@ -1353,7 +1540,7 @@ int reedsolomonDecode(vector<int> bit_array) {
 	/* Add errors at every 8th location starting at position zero */
 	//schifra::corrupt_message_all_errors00(block, 0, 8);
 
-	/*
+	//*
 	if (kakunin) {
 	cout << "Original BitArray:[";
 	for (i = 0; i < 15; i++) {
@@ -1368,6 +1555,11 @@ int reedsolomonDecode(vector<int> bit_array) {
 	if (!decoder.decode(bit_array_block))
 	{
 		std::cout << "Error - Critical decoding failure!" << std::endl;
+		cout << "Error BitArray:[";
+		for (i = 0; i < 15; i++) {
+			cout << int(bit_array_block.data[i]) << ", ";
+		}
+		cout << "]\n";
 		return -1;
 	}
 	string decoded_string((int)data_length, 0);
