@@ -1,6 +1,5 @@
 // realtime_demo_category.cpp : コンソール アプリケーションのエントリ ポイントを定義します。
 //
-
 #include "stdafx.h"
 
 #define _USE_MATH_DEFINES
@@ -19,7 +18,6 @@
 #include <opencv2/highgui.hpp>
 #include <opencv_lib.hpp>
 #include <opencv2/cudafilters.hpp>
-
 #include "schifra_galois_field.hpp"
 #include "schifra_galois_field_polynomial.hpp"
 #include "schifra_sequential_root_generator_polynomial_creator.hpp"
@@ -41,6 +39,7 @@ using namespace cv;
 #include "zikken_state.h"
 #include "flir_camera.h"
 #include "gpu_image.h"
+#include "cuda_lib.h"
 
 bool iti_heiretu;
 bool id_heiretu;
@@ -49,6 +48,8 @@ bool camera_heiretu;
 bool use_lc_moving;
 bool use_id_moving;
 bool flir_camera;
+int husen_moved = 0;
+string vname;
 std::ofstream zikken_output;
 LARGE_INTEGER freq;
 vector<vector<vector<Point2f>>> before_location_points;
@@ -220,13 +221,18 @@ void testCamera(VideoCapture &cap) {
 	cv::namedWindow("test");
 	if (flir_camera) {
 		SetCamera(cam1, system1);
-		writer = VideoWriter("./datas/zikken121250flir.wmv", CV_FOURCC('W', 'M', 'V', '1'), 30.0, Size(4000, 3000));
+		writer = VideoWriter("./datas/zikken121810	flir.wmv", CV_FOURCC('W', 'M', 'V', '1'), 30.0, Size(4000, 3000));
 	}
 	else {
 		cap = VideoCapture(0);
 		cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
 		cap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
-		writer = VideoWriter(".\datas\zikken1211web.wmv", CV_FOURCC('W', 'M', 'V', '1'), 15.0, Size(2592, 1944));
+		Mat frame;
+		while (1) {
+			cap >> frame;
+			if (frame.rows != 0) break;
+		}
+		writer = VideoWriter(".\datas\zikken1217web.wmv", CV_FOURCC('W', 'M', 'V', '1'), 15.0, Size(2592, 1944));
 	}
 	int count = 0;
 	while (1) {
@@ -240,8 +246,8 @@ void testCamera(VideoCapture &cap) {
 			cap >> frame;
 		}
 		QueryPerformanceCounter(&timer2);
-		//cout << "capture:" << double(timer2.QuadPart - timer1.QuadPart)*1000.0 / freq.QuadPart << "ms" << endl;
-		imshow("test", frame);
+		cout << "capture:" << double(timer2.QuadPart - timer1.QuadPart)*1000.0 / freq.QuadPart << "ms" << endl;
+		//imshow("test", frame);
 		if (count >= 10) {
 			writer << frame;
 		}
@@ -251,7 +257,7 @@ void testCamera(VideoCapture &cap) {
 			if (flir_camera) {
 				FinishCamera(cam1, system1);
 			}
-			//break;
+			break;
 		}
 	}
 }
@@ -286,7 +292,9 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 	CameraPtr pCam;
 	SystemPtr system;
 	ImagePtr camImage;
+
 	cv::VideoCapture cap;
+
 	if (flir_camera) {
 		SetCamera(pCam, system);
 		GetImage(pCam, camImage);
@@ -295,12 +303,13 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 	else {
 		//*usb camera use
 		//video reader and writer
-		cap = VideoCapture("./datas/zikken1211.wmv");
+		//cap = VideoCapture("./datas/zikken1211.wmv");
+		cap = VideoCapture(vname);
 		//cap = VideoCapture(0);
 		//cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
 		//cap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
 		//cap.set(CV_CAP_PROP_BUFFERSIZE, 3);
-		if (!cap.isOpened()) {
+	/*	if (!cap.isOpened()) {
 			cout << "cideo cannot open";
 		}
 		while (1) {
@@ -308,11 +317,12 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 			if (frame.rows != 0) {
 				break;
 			}
-		}
+		}*/
 		
 		//namedWindow("video");
 		//imshow("video", frame);
 		//waitKey(1);
+		frame = imread("frame_0.jpg", 1);
 	}
 
 
@@ -373,43 +383,70 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 		zikken_output << "progress  " << std::to_string(int(timer_count / fps) / 60) << ":" << std::to_string((timer_count / fps) % 60) << "\n";
 		cout << "progress  " << std::to_string(int(timer_count / fps) / 60) << ":" << std::to_string((timer_count / fps) % 60) << "\n";
 		LARGE_INTEGER prev_timer;
+		//if (timer_count == 100) break;
 
 		if (timer_count == NTEST) {
 			//break;
 		}
 		//*usb camera capture frame
 		QueryPerformanceCounter(&prev_timer);
+		cuda::GpuMat gpuFrame;
 		if (flir_camera) {
 			GetImage(pCam, camImage);
 			ImageToMat(camImage, frame);
+			if (use_gpu) {
+				//size_t width = camImage->GetWidth();
+
+				//size_t height = camImage->GetHeight(); 
+				//Mat result(Size(width, height), CV_8UC1, camImage->GetData());
+				//char* gpu_data = cuda_malloc((char*)camImage->GetData());
+				/*gpuFrame = cuda::GpuMat(Size(width, height), CV_8UC3, camImage->GetData());
+				Mat temp;
+				gpuFrame.download(temp);
+				imwrite("temp.jpg", temp);
+				Timer(prev_timer, string("カメラからの画像取得"));*/
+			}
 		}
 		else {
 			cap >> frame;
+			/*if (timer_count % 2 == 0) {
+				frame = imread("frame_0.jpg", 1);
+			}
+			else {
+				frame = imread(string("frame_") + to_string(husen_moved) + ".jpg", 1);
+			}*/
+			//frame = imread("frame_0.jpg");
 		}
 		if (!frame.cols) {
-			break;
+			//break;
 		}
 		Timer(prev_timer, string("カメラからの画像取得"));
 		//extract only desk_area
-		Mat frame_deskarea(frame, Rect((int)desk_area[0].x, (int)desk_area[0].y,
-			(int)((desk_area[1] - desk_area[0]).x), (int)(desk_area[1] - desk_area[0]).y));
+	/*	Mat frame_deskarea(frame, Rect((int)desk_area[0].x, (int)desk_area[0].y,
+			(int)((desk_area[1] - desk_area[0]).x), (int)(desk_area[1] - desk_area[0]).y));*/
 
-		Timer(prev_timer, "desk_area extract");
+		//Timer(prev_timer, "desk_area extract");
 
 		PostitResult postits;
-		getPostits(&postits, frame_deskarea, outer_size);
+		getPostits(&postits, frame, outer_size);
+
+
+		
 
 		int i, j;
 		//read postit's id and save
 
 		int idx = 0;
+		Mat kernel = cv::getStructuringElement(MORPH_RECT, Size(2, 2));
+		for (i = 0; i < analyzing_images.size(); i++) {
+			cv::dilate(analyzing_images[i], analyzing_images[i], kernel);
+		}
+		Timer(prev_timer, "dilate");
 		for (i = 0; i < analyzing_images.size(); i++) {
 			while (postits.postitpoints[idx].id >= 0) {
 				idx++;
 			}
-			Mat kernel = cv::getStructuringElement(MORPH_RECT, Size(2, 2));
-			Mat postit_image_analyzing;
-			cv::dilate(analyzing_images[i], postit_image_analyzing, kernel);
+			
 			if (kakunin) {
 				//*
 				namedWindow("analyzing");
@@ -417,7 +454,7 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 				waitKey(1);
 				//*/
 			}
-			vector<int> bit_array = readDots(postit_image_analyzing, outer_size);
+			vector<int> bit_array = readDots(analyzing_images[i], outer_size);
 			int result_num = -1;
 			result_num = reedsolomonDecode(bit_array);
 			postits.postitpoints[idx].id = result_num;
@@ -435,9 +472,6 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 		postit_points = postits.postitpoints;
 		int npostits = postit_points.size();
 		Timer(prev_timer, "前の情報を記録");
-		for (i = 0; i < 256; i++) {
-			postit_saved[i].show = false;
-		}
 		for (i = 0; i < npostits; i++) {
 			int result_num = postits.postitpoints[i].id;
 
@@ -458,14 +492,18 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 					postit_saved[result_num].has_key = true;
 					postit_saved[result_num].show = true;
 					postit_saved[result_num].points = postit_points[i].points;
-					postit_saved[result_num].points_saved = postit_points[i].points;
+					//postit_saved[result_num].points_saved = postit_points[i].points;
 					//postit_saved[result_num].naruhodo = 0;
 					postit_saved[result_num].last_time = timer_count / fps;
-					time(&postit_saved[result_num].first_time);
+					//time(&postit_saved[result_num].first_time);
 				}
 			}
+			else {
+				postit_saved[i].show = false;
+			}
 		}
-		for (i = 0; i < postit_saved.size(); i++) {
+		Timer(prev_timer, "付箋位置記録");
+		/*for (i = 0; i < postit_saved.size(); i++) {
 			PostitInfo val = postit_saved[i];
 			if (postit_saved[i].show) {
 				if ((timer_count / fps - val.last_time) > time_thre) {
@@ -476,7 +514,7 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 					postit_saved[i].show = false;
 				}
 			}
-		}
+		}*/
 
 		int key;
 		int brightness = 50;
@@ -510,7 +548,7 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 
 			}
 		}
-
+		Timer(prev_timer, "クラスタリング");
 		//draw information
 		projection_img = Mat(projector_resolution[1], projector_resolution[0], CV_8UC3, Scalar(brightness, brightness, brightness));
 		for (key = 0; key < postit_saved.size(); key++) {
@@ -529,7 +567,11 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 					cv::Mat eachpoint_3d = (cv::Mat_<double>(3, 1) << (double)each_point.x, (double)each_point.y, 1);
 					cv::Mat caliblatedPoint_3d(3, 1, CV_64FC1);
 					caliblatedPoint_3d = M * eachpoint_3d;
-					caliblated_points[i] = Point(projector_resolution[0] - (int)caliblatedPoint_3d.at<double>(0, 0), projector_resolution[1] - (int)caliblatedPoint_3d.at<double>(1, 0));
+					double x = caliblatedPoint_3d.at<double>(0, 0);
+					double y = caliblatedPoint_3d.at<double>(1, 0);
+					double z =caliblatedPoint_3d.at<double>(2, 0);
+					//caliblated_points[i] = Point(projector_resolution[0] - (int)(x/z), projector_resolution[1] - (int)(y/z));
+					caliblated_points[i] = Point((int)(x / z), (int)(y / z));
 					/*
 					caliblated_points[i] = Point((int)((each_point.x - desk_area[0].x)*down_scale_x) - x_buffer,
 					(int)((each_point.y - desk_area[0].y)*down_scale_y) - y_buffer);
@@ -561,14 +603,15 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 				localtime_s(&t_st, &d);
 			}
 		}
+		Timer(prev_timer, "画像作成");
 		imshow("projection", projection_img);
 		int c;
 		c = cv::waitKey(1);
+		Timer(prev_timer, "画像出力");
+		Timer(prev_timer, "後処理");
 		if (c == 27) {
 			break;
 		}
-
-		Timer(prev_timer, "後処理");
 		timer_count++;
 	}
 	if (flir_camera) {
@@ -578,6 +621,14 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 
 int main(int argc, char * argv[])
 {
+	//while (1) {
+	//	char c = waitKey(1);
+	//	if (c == 'q') break;
+	//}
+	//return 1;
+
+	/*gpu_image();
+	return 1;*/
 	/*
 	Spinnaker::CameraPtr cam1;
 	Spinnaker::SystemPtr system1;
@@ -592,6 +643,7 @@ int main(int argc, char * argv[])
 	return 0;
 	//*/
 	/*
+	zikken_output = ofstream("camera.log");
 	QueryPerformanceFrequency(&freq);
 	cv::VideoCapture testcap;
 	
@@ -599,30 +651,40 @@ int main(int argc, char * argv[])
 	testCamera(testcap);
 	return 0;
 	//*/
+
+
+	int fidx;
 	string fname;
-
-	iti_heiretu = false;
-	id_heiretu = false;
-	use_gpu = false;
-	camera_heiretu = false;
-	use_lc_moving = false;
-	use_id_moving = false;
-	flir_camera = false;
-	fname = string("./datas/csv/1213_1") + ".log";
-	zikken_output = ofstream(fname);
-	QueryPerformanceFrequency(&freq);
-	realtimeDemoCategory(argc, argv);
-
-	iti_heiretu = true;
-	id_heiretu = false;
-	use_gpu = false;
-	camera_heiretu = false;
-	use_lc_moving = false;
-	use_id_moving = false;
-	fname = string("./datas/csv/1213_2") + ".log";
-	zikken_output = ofstream(fname);
-	QueryPerformanceFrequency(&freq);
-	realtimeDemoCategory(argc, argv);
+	for (fidx = 5; fidx <= 5; fidx++) {
+		husen_moved = fidx;
+		vname = "./datas/zikken1217" + to_string(fidx) + "0flir.wmv";
+		vname = "./datas/zikken121750flir.wmv";
+		//vname = "./datas/zikken1211.wmv";
+		iti_heiretu = false;
+		id_heiretu = false;
+		use_gpu = true;
+		camera_heiretu = false;
+		use_lc_moving = false;
+		use_id_moving = false;
+		flir_camera = true;
+		fname = string("./datas/csv/1217_3") + to_string(fidx) + ".log";
+		zikken_output = ofstream(fname);
+		QueryPerformanceFrequency(&freq);
+		realtimeDemoCategory(argc, argv);
+		return 1;
+		iti_heiretu = false;
+		id_heiretu = false;
+		use_gpu = true;
+		camera_heiretu = false;
+		use_lc_moving = true;
+		use_id_moving = true;
+		flir_camera = true;
+		fname = string("./datas/csv/1217_4") + to_string(fidx) + ".log";
+		zikken_output = ofstream(fname);
+		QueryPerformanceFrequency(&freq);
+		realtimeDemoCategory(argc, argv);
+	}
+	return 0;
 
 	iti_heiretu = false;
 	id_heiretu = false;
@@ -630,7 +692,7 @@ int main(int argc, char * argv[])
 	camera_heiretu = false;
 	use_lc_moving = true;
 	use_id_moving = true;
-	fname = string("./datas/csv/1213_3") + ".log";
+	fname = string("./datas/csv/1213_22") + ".log";
 	zikken_output = ofstream(fname);
 	QueryPerformanceFrequency(&freq);
 	realtimeDemoCategory(argc, argv);
@@ -641,7 +703,7 @@ int main(int argc, char * argv[])
 	camera_heiretu = false;
 	use_lc_moving = false;
 	use_id_moving = false;
-	fname = string("./datas/csv/1213_4") + ".log";
+	fname = string("./datas/csv/1213_23") + ".log";
 	zikken_output = ofstream(fname);
 	QueryPerformanceFrequency(&freq);
 	realtimeDemoCategory(argc, argv);
@@ -652,7 +714,7 @@ int main(int argc, char * argv[])
 	camera_heiretu = false;
 	use_lc_moving = true;
 	use_id_moving = true;
-	fname = string("./datas/csv/1213_5") + ".log";
+	fname = string("./datas/csv/1213_24") + ".log";
 	zikken_output = ofstream(fname);
 	QueryPerformanceFrequency(&freq);
 	realtimeDemoCategory(argc, argv);
@@ -663,7 +725,7 @@ int main(int argc, char * argv[])
 	camera_heiretu = true;
 	use_lc_moving = true;
 	use_id_moving = true;
-	fname = string("./datas/csv/1213_6") + ".log";
+	fname = string("./datas/csv/1213_25") + ".log";
 	zikken_output = ofstream(fname);
 	QueryPerformanceFrequency(&freq);
 	realtimeDemoCategory(argc, argv);
@@ -675,7 +737,7 @@ int main(int argc, char * argv[])
 	camera_heiretu = false;
 	use_lc_moving = true;
 	use_id_moving = true;
-	fname = string("./datas/csv/1211_7") + ".log";
+	fname = string("./datas/csv/1211_26") + ".log";
 	zikken_output = ofstream(fname);
 	QueryPerformanceFrequency(&freq);
 	realtimeDemoCategory(argc, argv);

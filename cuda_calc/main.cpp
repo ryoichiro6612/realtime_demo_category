@@ -18,7 +18,7 @@ bool unitTest(int n)
 	int *out2 = new int[n];
 
 	for (int i = 0; i < n; i++) in[i] = rand() % 100;
-
+	complexCalcFast(in, out2, n);
 	complexCalcOriginal(in, out1, n);
 	complexCalcFast(in, out2, n);
 
@@ -38,8 +38,10 @@ bool unitTest(int n)
 	return false;
 }
 
-int main()
+int tot()
 {
+	
+	
 	if (unitTest(10)) {
 		printf("OK\n");
 	}

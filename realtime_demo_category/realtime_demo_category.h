@@ -11,3 +11,5 @@ extern vector<PostitPoint> postit_points;
 extern vector<Mat> analyzing_images;
 
 void printZikkenState(ofstream & out);
+
+void realtimeDemoCategory(int argc, char * argv[]);

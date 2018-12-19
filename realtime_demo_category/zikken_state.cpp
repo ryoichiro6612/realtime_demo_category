@@ -13,12 +13,12 @@ void printZikkenState()
 		<< "以前の位置マーカの利用#" << use_lc_moving << std::endl
 		<< "以前のidマーカの利用#" << use_id_moving << std::endl;
 }
-void Timer(LARGE_INTEGER &prev_timer, std::string label) {
+void Timer(LARGE_INTEGER &prev_timer, std::string label, double minus) {
 	LARGE_INTEGER now_timer;
 	QueryPerformanceCounter(&now_timer);
 	LARGE_INTEGER timer_freq;
 	QueryPerformanceFrequency(&timer_freq);
-	zikken_output << label << "," << double(now_timer.QuadPart - prev_timer.QuadPart) * 1000 / timer_freq.QuadPart << std::endl;
-	//std::cout << label << "," << double(now_timer.QuadPart - prev_timer.QuadPart) * 1000 / timer_freq.QuadPart << std::endl;
+	zikken_output << label << "," << double(now_timer.QuadPart - prev_timer.QuadPart) * 1000 / timer_freq.QuadPart - minus << std::endl;
+	std::cout << label << "," << double(now_timer.QuadPart - prev_timer.QuadPart) * 1000 / timer_freq.QuadPart - minus << std::endl;
 	QueryPerformanceCounter(&prev_timer);
 }

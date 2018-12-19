@@ -660,12 +660,13 @@ int GetImage(CameraPtr &pCam, ImagePtr &convertedImage) {
 		// things such as CRC, image status, and offset values, to
 		// name a few.
 		//
-			size_t width = pResultImage->GetWidth();
+		/*	size_t width = pResultImage->GetWidth();
 
-			size_t height = pResultImage->GetHeight();
+			size_t height = pResultImage->GetHeight();*/
 
-			cout << "Grabbed image " << ", width = " << width << ", height = " << height << endl;
+			//cout << "Grabbed image " << ", width = " << width << ", height = " << height << endl;
 			//convertedImage = pResultImage->Convert(PixelFormat_BGR8, NEAREST_NEIGHBOR);
+			//convertedImage = pResultImage->Convert(PixelFormat_Mono8, HQ_LINEAR);
 			//Mat result(Size(width, height), CV_8UC1, pResultImage->GetData());
 			//Mat converted;
 			//cuda::GpuMat gpuresult(result);
@@ -673,14 +674,21 @@ int GetImage(CameraPtr &pCam, ImagePtr &convertedImage) {
 			//Ptr<cv::cuda::Filter> filter = cv::cuda::createBoxFilter(CV_8UC1, CV_8UC1, Size(2, 2));
 			//filter->apply(gpuresult, gpuconverted);
 			//gpuconverted.download(converted);
-			////convertedImage = pResultImage->Convert(PixelFormat_Mono8);
-			//Timer(prev_timer, "convert");
+			//convertedImage = pResultImage->Convert(PixelFormat_Mono8);
+			
 			//Mat resized(Size(converted.cols / 5, converted.rows / 5), CV_8UC1);
 			//cv::resize(converted, resized, Size(result.cols / 5, result.rows / 5));
 			//cv::namedWindow("current Images", CV_WINDOW_AUTOSIZE);
 			//cv::imshow("current Images", converted);
 			//cv::waitKey(1);
+			//convertedImage = pResultImage->Convert(PixelFormat_BGR8, NEAREST_NEIGHBOR);
 			convertedImage = pResultImage->Convert(PixelFormat_BGR8, NEAREST_NEIGHBOR);
+			//convertedImage = Image::Create(pResultImage);
+			Timer(prev_timer, "convert");
+			ImagePtr temp = Image::Create(pResultImage);
+			Timer(prev_timer, "copy");
+			convertedImage = temp->Convert(PixelFormat_BGR8, NEAREST_NEIGHBOR);
+			Timer(prev_timer, "convert");
 		}
 		//
 		// Release image
@@ -694,6 +702,62 @@ int GetImage(CameraPtr &pCam, ImagePtr &convertedImage) {
 		Timer(prev_timer, "release");
 
 		std::cout << endl;
+	}
+	catch (Spinnaker::Exception &e)
+	{
+		cout << "Error: " << e.what() << endl;
+		return -1;
+	}
+}
+int GetSingleImage(CameraPtr &pCam, ImagePtr &convertedImage) {
+	LARGE_INTEGER prev_timer;
+	QueryPerformanceCounter(&prev_timer);
+	try
+	{
+		ImagePtr pResultImage;
+		int captureCount = 0;
+		for (captureCount = 0; captureCount < 1; captureCount++) {
+			pResultImage = pCam->GetNextImage();
+		}
+		Timer(prev_timer, "capture");
+
+		if (pResultImage->IsIncomplete())
+		{
+			// Retreive and print the image status description
+			cout << "Image incomplete: "
+				<< Image::GetImageStatusDescription(pResultImage->GetImageStatus())
+				<< "..." << endl << endl;
+		}
+		else {
+			//
+		// Print image information; height and width recorded in pixels
+		//
+		// *** NOTES ***
+		// Images have quite a bit of available metadata including
+		// things such as CRC, image status, and offset values, to
+		// name a few.
+		//
+			/*char * data = (char*)pResultImage->GetData();
+			char * mi = (char*)malloc(sizeof(char) * 4000 * 3000);
+			int i;
+			for (i = 0; i < 4000 * 3000; i++) {
+				mi[i] = data[i];
+			}*/
+			//result = pResultImage->Convert(PixelFormat_BGR8, NEAREST_NEIGHBOR);
+			//convertedImage = pResultImage->Convert(PixelFormat_Mono8);
+			ImagePtr temp = Image::Create(pResultImage);
+			Timer(prev_timer, "copy");
+			convertedImage = temp->Convert(PixelFormat_Mono8);
+		}
+		//
+		// Release image
+		//
+		// *** NOTES ***
+		// Images retrieved directly from the camera (i.e. non-converted
+		// images) need to be released in order to keep from filling the
+		// buffer.
+		//
+		pResultImage->Release();
 	}
 	catch (Spinnaker::Exception &e)
 	{

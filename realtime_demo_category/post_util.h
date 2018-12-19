@@ -13,8 +13,9 @@ static bool kakunin = false;
 #define KERNEL 19
 #define C_TEI 8
 #define OUTER_SIZE 450
-//#define KERNEL 7
-//#define C_TEI 1.5
+//#define KERNEL 9
+//#define C_TEI 5
+//#define OUTER_SIZE 200
 
 //typedef struct postits {
 //	int recognized_location_rectangle;
@@ -49,6 +50,8 @@ typedef struct postit_info {
 } PostitInfo;
 
 double sum_d(vector<Point2f> point1, vector<Point2f> point2);
+
+void getPostitsGpu(PostitResult * postits, cuda::GpuMat gpuframe, int outer_size);
 
 void getPostits(PostitResult * postits, cv::Mat frame, int outer_size);
 vector<int> readDots(Mat, int);

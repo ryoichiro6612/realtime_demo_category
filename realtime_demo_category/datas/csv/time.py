@@ -9,7 +9,8 @@ def time_write(name):
         col = 0
         csv_line = []
         for line in f:
-            if re.match("progress.+", line):
+            print(line)
+            if re.match("capture.+", line):
                 col+=1
                 if len(csv_line) > 0:
                     print(csv_line)
@@ -26,7 +27,8 @@ def time_write(name):
                 if col == 1:
                     row.append(m[0])
                 string = str(m[0])
-                csv_line.append(float(m[1]))
+                if float(m[1]) > 1:
+                    csv_line.append(float(m[1]))
                 count += 1
         print(count)
     #for i in range(0, len(csv_table)):

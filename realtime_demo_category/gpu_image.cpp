@@ -10,6 +10,7 @@
 #include <opencv2/cudafilters.hpp>
 #include "gpu_image.h"
 #include "zikken_state.h"
+#include "post_util.h"
 
 using namespace std;
 LARGE_INTEGER gpu_timer;
@@ -48,10 +49,10 @@ int gpu_image()
 		"supports(FEATURE_SET_COMPUTE_35): " << info.supports(cv::cuda::FEATURE_SET_COMPUTE_35) << endl <<
 		"supports(FEATURE_SET_COMPUTE_50): " << info.supports(cv::cuda::FEATURE_SET_COMPUTE_50)
 		<< endl;
-	cv::VideoCapture cap("zikken.wmv");
+	cv::VideoCapture cap("./datas/zikken1211.wmv");
 	//適応的閾値のループ
-	int ksize = 25;
-	int c = 9;
+	int ksize = KERNEL;
+	int c = C_TEI;
 
 	extern LARGE_INTEGER freq;
 	QueryPerformanceFrequency(&freq);
@@ -92,16 +93,18 @@ int gpu_image()
 void adaptiveThresholdGPU(cv::Mat &srcImage, cv::Mat &binImage, int ksize, int c) {
 	QueryPerformanceCounter(&gpu_timer);
 	//GPUを使ってRGBからグレースケールの変換テスト
-	cv::cuda::GpuMat GPU_SrcImage(srcImage);
+	cv::cuda::GpuMat GPU_SrcImage;
+	GPU_SrcImage.upload(srcImage);
+	Timer(gpu_timer, "CPUtoGPU");
 	cv::cuda::GpuMat GPU_GreyImage;
 	cv::cuda::GpuMat GPU_CompareImage;
 	cv::cuda::GpuMat GPU_BinImage;
 	double sigma = 0.3*(ksize / 2 - 1) + 0.8;
-	Timer(gpu_timer, "gpu画像をgpuにコピー");
+	
 
 	cv::cuda::cvtColor(GPU_SrcImage, GPU_GreyImage, cv::COLOR_BGR2GRAY);
 
-	Timer(gpu_timer, "gpu画像をグレー化");
+	Timer(gpu_timer, "グレー化");
 
 	cv::Ptr<cv::cuda::Filter> gaussian_filter = cv::cuda::createGaussianFilter(CV_8UC1, CV_8UC1, cv::Size(ksize, ksize), sigma, sigma);
 	gaussian_filter->apply(GPU_GreyImage, GPU_CompareImage);
@@ -109,9 +112,9 @@ void adaptiveThresholdGPU(cv::Mat &srcImage, cv::Mat &binImage, int ksize, int c
 	cv::cuda::subtract(GPU_CompareImage, C, GPU_CompareImage);
 	cv::cuda::compare(GPU_GreyImage, GPU_CompareImage, GPU_BinImage, cv::CMP_GT);
 
-	Timer(gpu_timer, "gpu画像をgpuに２値化");
+	Timer(gpu_timer, "２値化");
 	GPU_BinImage.download(binImage);
-	Timer(gpu_timer, "gpu画像をcpuにコピー");
+	Timer(gpu_timer, "GPUtoCPU");
 
 }
 

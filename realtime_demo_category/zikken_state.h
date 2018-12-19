@@ -12,6 +12,6 @@ extern bool use_id_moving;
 extern bool flir_camera;
 extern std::ofstream zikken_output;
 extern LARGE_INTEGER freq;
-#define NTEST 120
+#define NTEST 300
 void printZikkenState();
-void Timer(LARGE_INTEGER &, std::string label);
+void Timer(LARGE_INTEGER & prev_timer, std::string label, double minus = 0);

@@ -3,6 +3,10 @@
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <iostream>
+#include <Windows.h>
+#include <fstream>
 
 #include "cuda_calc.h"
 namespace CudaCalc
@@ -145,6 +149,7 @@ __global__ void complexCalcFastLoop(int *in, int *out, int n)
 
 void complexCalcFast(int *hIn, int *hOut, int n)
 {
+
 	int *dIn;
 	int *dOut;
 	cudaMallocHost((void**)&dIn, n * sizeof(int));
