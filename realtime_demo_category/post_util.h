@@ -54,6 +54,8 @@ double sum_d(vector<Point2f> point1, vector<Point2f> point2);
 void getPostitsGpu(PostitResult * postits, cuda::GpuMat gpuframe, int outer_size);
 
 void getPostits(PostitResult * postits, cv::Mat frame, int outer_size);
+bool NearLC(vector<Point2f>, vector<Point2f>);
+bool NearID(vector<Point2f> points1, vector<Point2f> points2);
 vector<int> readDots(Mat, int);
 Point2f max2f(Point2f*, int, int);
 Point max2i(Point*, int, int);

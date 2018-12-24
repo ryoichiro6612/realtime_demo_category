@@ -77,7 +77,8 @@ int gpu_image()
 
 		//gpuでの適応的閾値
 		QueryPerformanceCounter(&gpu_timer);
-		adaptiveThresholdGPU(SrcImage, GpuBinImage, ksize, c);
+		cv::cuda::GpuMat GpuSrcImage(SrcImage);
+		adaptiveThresholdGPU(GpuSrcImage, GpuBinImage, ksize, c);
 		cv::imshow("bin gpu", GpuBinImage);
 
 		cv::Mat subtractImage;
@@ -90,12 +91,9 @@ int gpu_image()
 	return 0;
 }
 
-void adaptiveThresholdGPU(cv::Mat &srcImage, cv::Mat &binImage, int ksize, int c) {
+void adaptiveThresholdGPU(cv::cuda::GpuMat &GPU_SrcImage, cv::Mat &binImage, int ksize, int c) {
 	QueryPerformanceCounter(&gpu_timer);
 	//GPUを使ってRGBからグレースケールの変換テスト
-	cv::cuda::GpuMat GPU_SrcImage;
-	GPU_SrcImage.upload(srcImage);
-	Timer(gpu_timer, "CPUtoGPU");
 	cv::cuda::GpuMat GPU_GreyImage;
 	cv::cuda::GpuMat GPU_CompareImage;
 	cv::cuda::GpuMat GPU_BinImage;

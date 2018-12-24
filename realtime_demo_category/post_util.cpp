@@ -4,6 +4,17 @@
 #include <opencv2/highgui/highgui.hpp> // highguiモジュールのヘッダーをインクルード
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/calib3d/calib3d.hpp>
+#include <opencv2/cudafilters.hpp>
+#include <opencv2/core/cuda.hpp>
+#include <opencv2/cudaimgproc.hpp>
+#include <opencv2/cudawarping.hpp>
+#include <iostream>
+#include <opencv/cv.hpp>
+#include <opencv2/cudaarithm.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv_lib.hpp>
+#include "cuda_lib.h"
+
 #include <iostream>
 #include <string>
 #include <vector>
@@ -14,21 +25,6 @@
 #include <fstream>
 #include <thread>
 #include <exception>
-
-#include "cuda_lib.h"
-
-#include <opencv2/cudafilters.hpp>
-#include <opencv2/core/cuda.hpp>
-#include <opencv2/cudaimgproc.hpp>
-#include <opencv2/cudawarping.hpp>
-
-#include <iostream>
-#include <opencv/cv.hpp>
-#include <opencv2/opencv.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv_lib.hpp>
-
-
 
 #include "analyze_config.h"
 #include "read_config.h"
@@ -45,8 +41,10 @@ Mat before_binImage;
 
 
 
-
 using namespace std;
+void do_worker1() {
+	return;
+}
 
 void miru(Mat m) {
 	int i,j;
@@ -68,8 +66,6 @@ void miru(Mat m) {
 	}
 	cout << "\n";
 }
-
-
 
 double sum_d(vector<Point2f> point1, vector<Point2f>point2) {
 	int size = point1.size();
@@ -404,6 +400,149 @@ public:
 	}
 };
 
+class Homography {
+	vector<Point2f> points;
+	double expand_ratio = EXPAND_RATIO;
+	//postit parameters
+	int postit_width = int(POSTIT_WIDTH * expand_ratio);
+	int postit_height = int(POSTIT_HEIGHT * expand_ratio);
+	int larger_buffer = int(LARGER_BUFFER * expand_ratio);
+	int location_dot_num = LOCATION_DOT_NUM;
+	int horizon_x_buffer = int(HORIZON_X_BUFFER * expand_ratio); //from postit's edge
+	int horizon_y_buffer = int(HORIZON_Y_BUFFER * expand_ratio);//from postit's edge
+	//common parameters for inner
+	int space_x = int(SPACE_X * expand_ratio);
+	int rect_len = int(RECT_LEN * expand_ratio);
+	int x_buffer = int(X_BUFFER * expand_ratio);//from rectangle's edge
+	int y_buffer = int(Y_BUFFER * expand_ratio); //from rectangle's edge
+	//location parameters for outer
+	int location_width = x_buffer * 2 + space_x * (location_dot_num - 1) + rect_len;
+	int location_height = int(LOCATION_HEIGHT * expand_ratio);
+	cuda::GpuMat gpu_frame;
+	Mat frame_original;
+public:
+	double iti_suitei;
+	double homogra;
+	Mat result_bin;
+	PostitPoint postitPoint;
+	void set(vector<Point2f> location_point, Mat&mat, cuda::GpuMat&gpumat) {
+		points = location_point;
+		gpu_frame = gpumat;
+		frame_original = mat;
+	}
+	void operator()() {
+		LARGE_INTEGER prev_timer, now_timer;
+		LARGE_INTEGER timer_freq;
+		QueryPerformanceCounter(&prev_timer);
+		QueryPerformanceFrequency(&timer_freq);
+		vector<Point2f> dst_points_original
+		{ Point2f(horizon_x_buffer + location_width / 2, horizon_y_buffer + location_height / 2),
+			Point2f(postit_width / 2, horizon_y_buffer + location_height / 2),
+			Point2f(postit_width - horizon_x_buffer - location_width / 2 ,horizon_y_buffer + location_height / 2),
+			Point2f(horizon_x_buffer + location_width / 2, postit_height - horizon_y_buffer - location_height / 2),
+			Point2f(postit_width / 2,postit_height - horizon_y_buffer - location_height / 2),
+			Point2f(postit_width - horizon_x_buffer - location_width / 2,postit_height - horizon_y_buffer - location_height / 2),
+			Point2f(horizon_x_buffer + location_height / 2, postit_height / 2),
+			Point2f(postit_width - horizon_x_buffer - location_height / 2, postit_height / 2)
+		};
+
+
+		vector<Point2f> dst_points_original_larger(8);
+		int i;
+		for (i = 0; i < dst_points_original.size(); i++) {
+			dst_points_original_larger[i] = Point2f(larger_buffer, larger_buffer) + dst_points_original[i];
+		}
+		Mat husen_mat;
+
+		Scalar Color[10] = { Scalar(0,255,0), Scalar(0,0,255),  Scalar(0,255,255),
+	Scalar(0,128,255),Scalar(255,0,255),Scalar(255,0,0),Scalar(255,255,0), Scalar(128,255,0), Scalar(0, 255, 128), Scalar(255, 255,255) };
+
+		vector<Point2f> src_point;
+		vector<Point2f> dst_point_mi;
+		vector<Point2f> dst_point_larger;
+		for (i = 0; i < points.size(); i++) {
+			if (points[i].x != 0 && points[i].y != 0) {
+				src_point.push_back(points[i]);
+				dst_point_mi.push_back(dst_points_original[i]);
+				dst_point_larger.push_back(dst_points_original_larger[i]);
+			}
+		}
+		//Timer(timer4, "src-dst");
+
+		// 付箋のある座標を記録する
+		Mat M_inv;
+		Mat mask;
+		M_inv = cv::findHomography(dst_point_mi, src_point, CV_RANSAC, 3, mask);
+
+		vector<Mat> postit_area;
+		//box_3d = (cv::Mat_<double>(3, 1) << box_a_sorted[m].x, box_a_sorted[m].y, 1);
+		vector<vector<double>> data{ { 0, 0, 1 } ,{ double(postit_width), 0, 1 },
+		{ double(postit_width), double(postit_height), 1 },{ 0,double(postit_height),1 } };
+		vector<Mat> postit_area_before{ Mat(3,1,CV_64FC1,&data[0][0]), Mat(3,1,CV_64FC1,&data[1][0]), Mat(3,1,CV_64FC1,&data[2][0]),Mat(3,1,CV_64FC1,&data[3][0]) };
+		vector<Point2f> postit_points_each;
+		for (i = 0; i < postit_area_before.size(); i++) {
+			Mat postit_area_before_each = postit_area_before[i];
+			//print postit_area_before_each
+			Mat postit_area_after(3, 1, CV_64FC1);
+			if (M_inv.rows > 0) {
+				postit_area_after = M_inv * postit_area_before_each;
+				//miru(postit_area_after);
+				double* data = (double*)postit_area_after.data;
+				double* data1 = (double*)postit_area_before_each.data;
+				float x, y;
+				x = float(postit_area_after.at<double>(0, 0) / postit_area_after.at<double>(2, 0));
+				y = float(postit_area_after.at<double>(1, 0) / postit_area_after.at<double>(2, 0));
+				//cout << postit_area_after.at<double>(2, 0) << endl;
+				//cout << data1[0] << "," << data1[1] << "  " << postit_area_after.at<double>(0, 0) << "," << postit_area_after.at<double>(1, 0) << endl;
+				//cout << data1[0] << "," << data1[1] << "  "<< x << "," << y << endl;
+				postit_points_each.push_back(Point2f(x, y));
+
+			}
+		}
+		QueryPerformanceCounter(&now_timer);
+		iti_suitei = double(now_timer.QuadPart - prev_timer.QuadPart) * 1000 / timer_freq.QuadPart;
+		QueryPerformanceCounter(&prev_timer);
+		int n;
+		//id分析のため付箋の画像を記録
+		cv::Mat M = cv::findHomography(src_point, dst_point_larger, CV_RANSAC, 3);
+		Mat postit_result(postit_height + larger_buffer * 2, postit_width + larger_buffer * 2, CV_8UC3);
+		if (M.rows > 0) {
+			if (use_gpu) {
+				/*LARGE_INTEGER si;
+				QueryPerformanceCounter(&si);*/
+				cv::cuda::GpuMat gpudst(postit_height + larger_buffer * 2, postit_width + larger_buffer * 2, CV_8UC3);
+				cuda::warpPerspective(gpu_frame, gpudst, M, gpudst.size());
+				cv::cuda::GpuMat gpudst_grey, gpudst_bin;
+				cv::cuda::cvtColor(gpudst, gpudst_grey, CV_RGB2GRAY);
+				Mat postit_result_gray;
+				gpudst_grey.download(postit_result_gray);
+				cv::threshold(postit_result_gray, result_bin, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+				if (kakunin) {
+					gpudst.download(postit_result);
+				}
+				//Timer(si, "gpu");
+			}
+			else {
+				//LARGE_INTEGER si;
+				//QueryPerformanceCounter(&si);
+				cv::warpPerspective(frame_original, postit_result, M, postit_result.size());
+				Mat postit_result_gray;
+				cv::cvtColor(postit_result, postit_result_gray, CV_RGB2GRAY);
+				extern vector<Mat> analyzing_images;
+				cv::threshold(postit_result_gray, result_bin, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+				//Timer(si, "cpu");
+			}
+			postitPoint.id = -1;
+			postitPoint.points = postit_points_each;
+			int lc_id;
+			for (lc_id = 0; lc_id < 8; lc_id++) {
+				postitPoint.points.push_back(points[lc_id]);
+			}
+		}
+		QueryPerformanceCounter(&now_timer);
+		homogra = double(now_timer.QuadPart - prev_timer.QuadPart) * 1000 / timer_freq.QuadPart;
+	}
+};
 void getPostitsGpu(PostitResult * postits, cuda::GpuMat gpuframe, int outer_size) {
 	Mat frame;
 
@@ -436,8 +575,14 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 	QueryPerformanceCounter(&prev_timer);
 	Mat grayImage;
 	cv::Mat binImage(frame.rows, frame.cols, CV_8UC1);
+	cuda::GpuMat gpu_frame;
 	if (use_gpu) {
-		adaptiveThresholdGPU(frame, binImage, KERNEL, C_TEI);
+		LARGE_INTEGER gpu_timer;
+		QueryPerformanceCounter(&gpu_timer);
+		//GPUを使ってRGBからグレースケールの変換テスト
+		gpu_frame.upload(frame);
+		Timer(gpu_timer, "CPUtoGPU");
+		adaptiveThresholdGPU(gpu_frame, binImage, KERNEL, C_TEI);
 	}
 	else {
 		cv::cvtColor(frame, grayImage, CV_RGB2GRAY);
@@ -457,7 +602,8 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 	cv::dilate(binImage, binImage, kernel);
 	cv::erode(binImage, binImage, kernel);
 	cv::erode(binImage, binImage, kernel);
-	Timer(prev_timer, "morphology");
+	//Timer(prev_timer, "morphology");
+	QueryPerformanceCounter(&prev_timer);
 	//*/
 	//cv::erode(binImage, binImage, kernel);
 	//cv::erode(binImage, binImage, kernel);
@@ -534,13 +680,18 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 	extern bool use_lc_moving;
 	LARGE_INTEGER lc_prev, lc_now;
 	double sum_lccheck = 0;
+	int check_rect = 0;
+	QueryPerformanceCounter(&prev_timer);
 	for (i = 0; i < contours.size(); i++) {
-		QueryPerformanceCounter(&prev_timer);
 		int csize = contours[i].size();
-		if (csize < 30 && 400 < csize ) {
-			break;
+		if (csize < 60 || 150 < csize ) {
+			continue;
+		}
+		if (kakunin) {
+			//drawContours(res_contours, contours, i, Scalar(0, 255, 0));
 		}
 		cv::RotatedRect rect = minAreaRect(contours[i]);
+		check_rect++;
 		float area = rect.size.area();
 		vector<Point2f> rect_point(4);
 		vector<Point> rect_int_point(4);
@@ -579,9 +730,8 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 					for (location_id = 0; location_id < before_location_points.size(); location_id++) {
 						for (nlocation = 0; nlocation < before_location_points[location_id].size(); nlocation++) {
 							vector<Point2f> before_rect = before_location_points[location_id][nlocation];
-							double dict = sum_d(before_rect, rect_point);
 							//cout << dict << endl;
-							if (dict < 20) {
+							if (NearLC(before_rect, rect_point)) {
 								not_moving++;
 								//cout << dict << endl;
 								location_xy[location_id].push_back(before_rect);
@@ -615,6 +765,7 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 		}
 	}
 	Timer(prev_timer, "位置マーカのdetect", sum_lccheck);
+	cout << check_rect << "/" << contours.size() << endl;
 	if (use_lc_moving) {
 		cout << "動いている位置マーカ" << moving << endl;
 		cout << "動いていない位置マーカ" << not_moving << endl;
@@ -635,20 +786,19 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 	extern bool iti_heiretu;
 
 	if (iti_heiretu) {
-		//やること　長方形抽出
+		std::mutex mis;
+		LARGE_INTEGER iti_timer;
 		int rows = frame_original.rows;
 		int cols = frame_original.cols;
 		vector<ReadLocationId> readLocation(rects.size());
+		vector<thread> t(rects.size());
+		QueryPerformanceCounter(&iti_timer);
 		for (mj = 0; mj < rects.size(); mj++) {
 			readLocation[mj].set(rects[mj], frame_original);
-			std::thread t(std::ref(readLocation[mj]));
-			t.join();
-			/*try {
-				
-			}
-			catch (std::exception &ex) {
-				std::cerr << ex.what() << std::endl;
-			}*/
+		}
+#pragma omp parallel for
+		for (mj = 0; mj < rects.size(); mj++) {
+			readLocation[mj]();
 		}
 		for (mj = 0; mj < rects.size(); mj++) {
 			int id = readLocation[mj].getResult();
@@ -705,30 +855,30 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 		int max_x = min(cols, int(max_point.x + point_buffer_for_larger));
 		cv::Rect larger_area_rect(min_x, min_y, max_x - min_x, max_y - min_y);
 		cv::Mat larger_area(frame_original, larger_area_rect);
+		Mat grey_larger_area;
 		Mat bin_larger_area;
-		if (use_gpu) {
-			cuda::GpuMat gpu_larger(larger_area);
-			cuda::GpuMat gpu_larger_grey, gpu_larger_bin;
+		cuda::GpuMat gpu_larger;
+		cuda::GpuMat gpu_larger_grey, gpu_larger_bin;
+		if (use_gpu && 0) {
+			gpu_larger.upload(larger_area);
 			cuda::cvtColor(gpu_larger, gpu_larger_grey, COLOR_RGB2GRAY);
-			cv::cuda::GpuMat C = cv::cuda::GpuMat(gpu_larger.size(), CV_8UC1, cv::Scalar(100));
-
-			cv::cuda::compare(gpu_larger_grey, C, gpu_larger_bin, cv::CMP_GT);
-			//cv::cuda::threshold(gpu_larger_grey, gpu_larger_bin, 100, 255, THRESH_BINARY);
+			cv::cuda::threshold(gpu_larger_grey, gpu_larger_bin, 100, 255, THRESH_BINARY);
+			gpu_larger_bin.download(bin_larger_area);
+			gpu_larger_grey.download(grey_larger_area);
 		}
 		else {
-			cv::Mat larger_area_grayImage(larger_area.size(), CV_8UC1);
-			cv::cvtColor(larger_area, larger_area_grayImage, CV_RGB2GRAY);
-			cv::Mat bin_larger_area(larger_area.size(), CV_8UC1);
-			cv::threshold(larger_area_grayImage, bin_larger_area, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+			cv::cvtColor(larger_area, grey_larger_area, CV_RGB2GRAY);
+			cv::threshold(grey_larger_area, bin_larger_area, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
 		}
-		
 
 		if (kakunin) {
-			/*namedWindow("larger");
+			/*
+			namedWindow("larger");
 			imshow("larger", larger_area);
 			namedWindow("larger_bin");
 			imshow("larger_bin", bin_larger_area);
-			waitKey(1);*/
+			waitKey(1);
+			//*/
 		}
 
 		bool flag_changed = false;
@@ -736,6 +886,9 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 		std::vector<std::vector<Point>> contours_in_larger;
 		std::vector<Vec4i>hierarchy_in_larger;
 		cv::findContours(bin_larger_area, contours_in_larger, hierarchy_in_larger, CV_RETR_TREE, CV_CHAIN_APPROX_NONE);
+		//こっちとの比較と輪郭のサイズでの短縮
+		//cv::findContours(bin_larger_area, contours_in_larger, hierarchy_in_larger, CV_RETR_LIST, CV_CHAIN_APPROX_NONE);
+		
 		int j;
 		for (j = 0; j < contours_in_larger.size(); j++) {
 			cv::RotatedRect rect_in_larger;
@@ -809,13 +962,24 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 			cv::waitKey(1);
 			//*/
 			cv::Mat M = cv::getPerspectiveTransform(before_points, after_points);
-			cv::Mat dst(location_height + point_buffer * 2, location_width + point_buffer * 2, CV_8UC1);
-			cv::warpPerspective(larger_area, dst, M, dst.size());
+			cv::Mat dst_binImage;
+			if (use_gpu && 0) {	
+				cv::cuda::GpuMat gpudst(location_height + point_buffer * 2, location_width + point_buffer * 2, CV_8UC1);
+				cuda::warpPerspective(gpu_larger_grey, gpudst, M, gpudst.size());
+				cv::cuda::GpuMat gpudst_bin;
+				cv::cuda::threshold(gpudst, gpudst_bin, 100, 255, THRESH_BINARY);
+				gpudst_bin.download(dst_binImage);
+			}
+			else {
+				//グレー化あと透視変換
+				Mat dst = Mat(location_height + point_buffer * 2, location_width + point_buffer * 2, CV_8UC1);
+				cv::warpPerspective(grey_larger_area, dst, M, dst.size());
+				cv::threshold(dst, dst_binImage, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+			}
 
-			cv::Mat dst_grayImage(dst.size(), CV_8UC1);
-			cv::Mat dst_binImage(dst.size(), CV_8UC1);
-			cv::cvtColor(dst, dst_grayImage, CV_RGB2GRAY);
-			cv::threshold(dst_grayImage, dst_binImage, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+
+
+			
 			/*
 			cv::namedWindow("out", CV_WINDOW_AUTOSIZE);
 			cv::imshow("out", dst_binImage);
@@ -915,12 +1079,17 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 					y,
 					width,
 					height);
-				cv::Mat dst_area(dst_binImage, dst_rect);
-				//miru(dst_area);
-				double ha = cv::mean(dst_area).val[0];
-				if (cv::mean(dst_area).val[0] < double(dot_read_thre)) {
-					dot_point[k] = 1;
+				try{
+					cv::Mat dst_area(dst_binImage, dst_rect);
+					//miru(dst_area);
+					double ha = cv::mean(dst_area).val[0];
+					if (cv::mean(dst_area).val[0] < double(dot_read_thre)) {
+						dot_point[k] = 1;
+					}
 				}
+				catch(cv::Exception& e){
+					dot_point[k] = 0;
+				}	
 
 			}
 			if (dot_point[0] == 1 && dot_point[location_dot_num - 1] == 0) {
@@ -981,8 +1150,6 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 	
 	Timer(prev_timer, "位置マーカの読取");
 	zikken_output << "探索位置マーカ数=" << rects.size() << endl;
-	LARGE_INTEGER iti_timer;
-	QueryPerformanceCounter(&iti_timer);
 	QueryPerformanceCounter(&prev_timer);
 
 
@@ -1108,7 +1275,7 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 						Point2f dst_point = mean2f(&location_xy[m][n][0], 4, 0) + vec_from_to[m][i].x * right_vector + vec_from_to[m][i].y * below_vector;
 						for (j = 0; j < location_xy[i].size(); j++) {
 							if (location_xy[i][j][0].x != -1 &&
-								norm(mean2f(&location_xy[i][j][0], 4, 0) - dst_point)  < 2.0*error_thresh * (pow(double(outer_size) / 220, 0.5))) {
+								norm(mean2f(&location_xy[i][j][0], 4, 0) - dst_point)  < 1.5*error_thresh * (pow(double(outer_size) / 220, 0.5))) {
 								location_points[i] = mean2f(&location_xy[i][j][0], 4, 0);
 								vector<int> point_delete{ i,j };
 								points_to_delete.push_back(point_delete);
@@ -1137,210 +1304,300 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 			}
 		}
 	}
-	vector<Point2f> dst_points_original
-	{ Point2f(horizon_x_buffer + location_width / 2, horizon_y_buffer + location_height / 2),
-		Point2f(postit_width / 2, horizon_y_buffer + location_height / 2),
-		Point2f(postit_width - horizon_x_buffer - location_width / 2 ,horizon_y_buffer + location_height / 2),
-		Point2f(horizon_x_buffer + location_width / 2, postit_height - horizon_y_buffer - location_height / 2),
-		Point2f(postit_width / 2,postit_height - horizon_y_buffer - location_height / 2),
-		Point2f(postit_width - horizon_x_buffer - location_width / 2,postit_height - horizon_y_buffer - location_height / 2),
-		Point2f(horizon_x_buffer + location_height / 2, postit_height / 2),
-		Point2f(postit_width - horizon_x_buffer - location_height / 2, postit_height / 2)
-	};
+	Timer(prev_timer, "同じ付箋の位置マーカの推定");
 
-
-	vector<Point2f> dst_points_original_larger(8);
-	for (i = 0; i < dst_points_original.size(); i++) {
-		dst_points_original_larger[i] = Point2f(larger_buffer, larger_buffer) + dst_points_original[i];
-	}
-	vector<vector<Point2f>> ptPostitPointsEach;
-	for (m = 0; m < location_points_all.size(); m++) {
-
-		vector<Point2f> points = location_points_all[m];
-		vector<Point2f> src_point;
-		vector<Point2f> dst_point_mi;
-		vector<Point2f> dst_point_larger;
-		int i;
-		for (i = 0; i < points.size(); i++) {
-			if (points[i].x != 0 && points[i].y != 0) {
-				src_point.push_back(points[i]);
-				int r = m * 80 % 255;
-				if(kakunin)cv::circle(frame, Point(int(points[i].x), int(points[i].y)), 5, Scalar(124, 255-r, r), 2);
-				dst_point_mi.push_back(dst_points_original[i]);
-				dst_point_larger.push_back(dst_points_original_larger[i]);
-				//if (dst_point_mi.size() == 4) break;
-				
-			}
-
-		}
-		if (kakunin) {
-			for (i = 0; i < src_point.size(); i++) {
-				//cv::circle(frame, src_point[i], 10, Scalar(m*80%255, 255, 0), 2);
-			}
-			
-		}
-
-		// 付箋のある座標を記録する
-		//Mat M_inv(3, 3, CV_64FC1);
-		Mat M_inv;
-		Mat mask;
-		M_inv = cv::findHomography(dst_point_mi, src_point, CV_RANSAC, 3, mask);
-		//cout << M_inv.rows << M_inv.cols << endl;
-		//cout << M_inv.at<double>(0, 0) << " " << M_inv.at<double>(1, 0) << " " << M_inv.at<double>(2, 0) << " " << M_inv.at<double>(0, 1) << " " << M_inv.at<double>(1, 1) << " " << M_inv.at<double>(2, 1) << " " << M_inv.at<double>(0, 2) << " " << M_inv.at<double>(1, 2) << " " << M_inv.at<double>(2, 2) << endl;
-		/*if (dst_point_mi.size() != 4)continue;
-		M_inv = getPerspectiveTransform(dst_point_mi, src_point);*/
-
-		//RANSACで使われた対応点のみ抽出
-		if (kakunin) {
-			vector<cv::DMatch> inlinerMatch;
-			for (size_t i = 0; i < mask.rows; ++i) {
-				uchar *inliner = mask.ptr<uchar>(i);
-				if (inliner[0] == 1) {
-					//cv::circle(frame, src_point[i], 15, Scalar(m * 80 % 255, 255, 255), 2);
-					//cv::line(frame, src_point[i], dst_point_mi[i], Scalar(0, 255, 255), 2);
-				}
-			}
-		}
-		vector<Mat> postit_area;
-		//box_3d = (cv::Mat_<double>(3, 1) << box_a_sorted[m].x, box_a_sorted[m].y, 1);
-		vector<vector<double>> data{ { 0, 0, 1 } ,{ double(postit_width), 0, 1 },
-		{ double(postit_width), double(postit_height), 1 },{ 0,double(postit_height),1 } };
-		vector<Mat> postit_area_before{ Mat(3,1,CV_64FC1,&data[0][0]), Mat(3,1,CV_64FC1,&data[1][0]), Mat(3,1,CV_64FC1,&data[2][0]),Mat(3,1,CV_64FC1,&data[3][0]) };
-		vector<Point2f> postit_points_each;
-		for (i = 0; i < postit_area_before.size(); i++) {
-			Mat postit_area_before_each = postit_area_before[i];
-			//print postit_area_before_each
-			Mat postit_area_after(3, 1, CV_64FC1);
-			if (M_inv.rows > 0) {
-				postit_area_after = M_inv * postit_area_before_each;
-				//miru(postit_area_after);
-				double* data = (double*)postit_area_after.data;
-				double* data1 = (double*)postit_area_before_each.data;
-				float x, y;
-				x = float(postit_area_after.at<double>(0, 0) / postit_area_after.at<double>(2, 0));
-				y = float(postit_area_after.at<double>(1, 0) / postit_area_after.at<double>(2, 0));
-				//cout << postit_area_after.at<double>(2, 0) << endl;
-				//cout << data1[0] << "," << data1[1] << "  " << postit_area_after.at<double>(0, 0) << "," << postit_area_after.at<double>(1, 0) << endl;
-				//cout << data1[0] << "," << data1[1] << "  "<< x << "," << y << endl;
-				postit_points_each.push_back(Point2f(x, y));
-
-			}
-		}
-		if (kakunin) {
-			for (i = 0; i < src_point.size(); i++) {
-				if (i == 0) {
-					//cout << M_inv.at<double>(0, 0) << " " << M_inv.at<double>(1, 0) << " " << M_inv.at<double>(2, 0) << " " << M_inv.at<double>(0, 1) << " " << M_inv.at<double>(1, 1) << " " << M_inv.at<double>(2, 1) << " " << M_inv.at<double>(0, 2) << " " << M_inv.at<double>(1, 2) << " " << M_inv.at<double>(2, 2) << endl;
-				}
-				Mat postit_area_afters(3, 1, CV_64FC1);
-				vector<double> data{ dst_point_mi[i].x, dst_point_mi[i].y, 1 };
-				Mat dataMat(3, 1, CV_64FC1, &data[0]);
-				postit_area_afters = M_inv * dataMat;
-
-				double* datab = (double*)postit_area_afters.data;
-				double* data1 = (double*)dataMat.data;
-				int x, y;
-				x = int(postit_area_afters.at<double>(0, 0) / postit_area_afters.at<double>(2, 0));
-				y = int(postit_area_afters.at<double>(1, 0) / postit_area_afters.at<double>(2, 0));
-				//cout << data1[0] << "," << data1[1] << "  " << postit_area_afters.at<double>(0, 0) << "," << postit_area_afters.at<double>(1, 0) << endl;
-				//cout << data1[0] << ","<< data1[1] << "  " << x << "," << y << endl;
-				if (kakunin) {
-					cv::circle(frame, Point(x, y), 20, Scalar(255, 0, 0), 1);
-				}
-				//cv::line(frame, src_point[i], Point(int(postit_area_after.at<double>(0, 0)), int(postit_area_after.at<double>(1, 0))), Scalar(0, 255, 255), 3);
-			}
-		}
-		if (kakunin) {
-			vector<Point> points = vecPointToI(postit_points_each);
-			cv::polylines(frame, points, true, cv::Scalar(0, 0, 255), 2);
-			/*show_img = cv::Mat(cv::Size(frame.cols / 5, frame.rows / 5), CV_8UC3);
-			cv::resize(frame, show_img, show_img.size());
-			cv::imshow("show", show_img);
-			waitKey(1);*/
-		}
-		ptPostitPointsEach.push_back(postit_points_each);
-	}
-
-	Timer(iti_timer, "付箋位置の推定");
-	
-
-	
-
-	//points include 8 points(1 postit's each point)
-	int count = 0;
 	extern vector<PostitPoint> before_postits_points;
 	moving = 0;
 	int notmoving = 0;
 	double sum_idcheck = 0;
 	LARGE_INTEGER id_prev, id_now;
-	for (m = 0; m < location_points_all.size(); m++) {
-		vector<Point2f> points = location_points_all[m];
-		vector<Point2f> src_point;
-		vector<Point2f> dst_point_mi;
-		vector<Point2f> dst_point_larger;
-		int i;
-		for (i = 0; i < points.size(); i++) {
-			if (points[i].x != 0 && points[i].y != 0) {
-				src_point.push_back(points[i]);
-				dst_point_mi.push_back(dst_points_original[i]);
-				dst_point_larger.push_back(dst_points_original_larger[i]);
-			}
+	extern bool use_id_moving;
+	vector<vector<Point2f>> location_points_all_new;
 
-		}
-		int n;
-		vector<Point2f> postit_points_each = ptPostitPointsEach[m];
-		if (kakunin) {
-			vector<Point> points = vecPointToI(postit_points_each);
-			cv::polylines(frame, points, true, cv::Scalar(0, 0, 255), 2);
-		}
-
-		extern bool use_id_moving;
-		if (use_id_moving) {
+	if (use_id_moving) {
+		for (m = 0; m < location_points_all.size(); m++) {
 			QueryPerformanceCounter(&id_prev);
 			bool moving_postit = true;
 			for (n = 0; n < before_postits_points.size(); n++) {
-				double d = sum_d(before_postits_points[n].points, postit_points_each);
-				if (d < 10) {
+				if (before_postits_points[n].id >= 0 && NearID(before_postits_points[n].points, location_points_all[m])) {
 					//cout << d << endl;
 					//extern vector<int>postit_ids;
 					PostitPoint postitpoint;
 					postitpoint.id = before_postits_points[n].id;
-					postitpoint.points = postit_points_each;
+					postitpoint.points = before_postits_points[n].points;
 					postits->postitpoints.push_back(postitpoint);
 					moving_postit = false;
 					notmoving++;
+					if (kakunin) {
+						int ss;
+						vector<Point2f> temp;
+						for (ss = 0; ss < 4; ss++) {
+							temp.push_back(postitpoint.points[ss]);
+						}
+						vector<Point> points = vecPointToI(temp);
+						cv::polylines(frame, points, true, cv::Scalar(255, 0, 0), 2);
+					}
 					break;
+
 				}
 			}
 			QueryPerformanceCounter(&id_now);
 			sum_idcheck += double(id_now.QuadPart - id_prev.QuadPart) * 1000 / freq.QuadPart;
-			if (!moving_postit) continue;
+			if (moving_postit) {
+				location_points_all_new.push_back(location_points_all[m]);
+			}
+		}
+		location_points_all = location_points_all_new;
+	}
+	if (use_lc_moving) {
+		Timer(prev_timer, "付箋位置の比較");
+	}
+	
+
+	//points include 8 points(1 postit's each point)
+	int count = 0;
+	
+	extern bool id_heiretu;
+	if (id_heiretu) {
+		int npostit = location_points_all.size();
+		vector<Homography> homo(npostit);
+		for (m = 0; m < location_points_all.size(); m++) {
+			homo[m].set(location_points_all[m], frame_original, gpu_frame);
+		}
+		for (m = 0; m < location_points_all.size(); m++) {
+			homo[m]();
+		}
+		double sumIti = 0, sumHomo = 0;
+		for (m = 0; m < location_points_all.size(); m++) {
+			analyzing_images.push_back(homo[m].result_bin);
+			postits->postitpoints.push_back(homo[m].postitPoint);
+			sumIti += homo[m].iti_suitei;
+			sumHomo += homo[m].homogra;
+		}
+		QueryPerformanceCounter(&prev_timer);
+		Timer(prev_timer, "付箋位置推定", -sumIti);
+		Timer(prev_timer, "射影変換", -sumHomo);
+	}
+	else {
+		vector<Point2f> dst_points_original
+		{ Point2f(horizon_x_buffer + location_width / 2, horizon_y_buffer + location_height / 2),
+			Point2f(postit_width / 2, horizon_y_buffer + location_height / 2),
+			Point2f(postit_width - horizon_x_buffer - location_width / 2 ,horizon_y_buffer + location_height / 2),
+			Point2f(horizon_x_buffer + location_width / 2, postit_height - horizon_y_buffer - location_height / 2),
+			Point2f(postit_width / 2,postit_height - horizon_y_buffer - location_height / 2),
+			Point2f(postit_width - horizon_x_buffer - location_width / 2,postit_height - horizon_y_buffer - location_height / 2),
+			Point2f(horizon_x_buffer + location_height / 2, postit_height / 2),
+			Point2f(postit_width - horizon_x_buffer - location_height / 2, postit_height / 2)
+		};
+
+
+		vector<Point2f> dst_points_original_larger(8);
+		for (i = 0; i < dst_points_original.size(); i++) {
+			dst_points_original_larger[i] = Point2f(larger_buffer, larger_buffer) + dst_points_original[i];
+		}
+		vector<vector<Point2f>> ptPostitPointsEach;
+		Mat husen_mat;
+		if (kakunin) {
+			frame_original.copyTo(husen_mat);
 		}
 
-		//id分析のため付箋の画像を記録
-		cv::Mat M = cv::findHomography(src_point, dst_point_larger, CV_RANSAC, 3);
-		Mat postit_result(postit_height + larger_buffer * 2, postit_width + larger_buffer * 2, CV_8UC3);
-		if (M.rows > 0) {
-			cv::warpPerspective(frame_original, postit_result, M, postit_result.size());
-			//imshow("out", postit_result);
-			//imwrite("fusen" + to_string(m) + ".jpg", postit_result);
-			cv::waitKey(1);
-			Mat postit_result_gray;
-			cv::cvtColor(postit_result, postit_result_gray, CV_RGB2GRAY);
-			Mat postit_result_bin;
-			Mat postit_result_morphology;
-			extern vector<Mat> analyzing_images;
-			cv::threshold(postit_result_gray, postit_result_bin, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
-			analyzing_images.push_back(postit_result_bin);
-			PostitPoint postitpoint;
-			postitpoint.id = -1;
-			postitpoint.points = postit_points_each;
-			postits->postitpoints.push_back(postitpoint);
-			moving++;
+		Scalar Color[10] = { Scalar(0,255,0), Scalar(0,0,255),  Scalar(0,255,255),
+	Scalar(0,128,255),Scalar(255,0,255),Scalar(255,0,0),Scalar(255,255,0), Scalar(128,255,0), Scalar(0, 255, 128), Scalar(255, 255,255) };
+		for (m = 0; m < location_points_all.size(); m++) {
+			LARGE_INTEGER timer4;
+			QueryPerformanceCounter(&timer4);
+			vector<Point2f> points = location_points_all[m];
+			vector<Point2f> src_point;
+			vector<Point2f> dst_point_mi;
+			vector<Point2f> dst_point_larger;
+			int i;
+			for (i = 0; i < points.size(); i++) {
+				if (points[i].x != 0 && points[i].y != 0) {
+					src_point.push_back(points[i]);
+					int r = m * 80 % 255;
+					if (kakunin) {
+						cv::circle(husen_mat, Point(int(points[i].x), int(points[i].y)), 8, Color[m], 3);
+						cv::putText(husen_mat, to_string(i),
+							Point(int(location_points_all[m][i].x), int(location_points_all[m][i].y)),
+							CV_FONT_HERSHEY_PLAIN, 5.0, Color[m], 5);
+					}
+					dst_point_mi.push_back(dst_points_original[i]);
+					dst_point_larger.push_back(dst_points_original_larger[i]);
+					//if (dst_point_mi.size() == 4) break;
+
+				}
+			}
+			if (kakunin) {
+				for (i = 0; i < src_point.size(); i++) {
+					//cv::circle(frame, src_point[i], 10, Scalar(m*80%255, 255, 0), 2);
+				}
+
+			}
+			//Timer(timer4, "src-dst");
+
+			// 付箋のある座標を記録する
+			//Mat M_inv(3, 3, CV_64FC1);
+			Mat M_inv;
+			Mat mask;
+			M_inv = cv::findHomography(dst_point_mi, src_point, CV_RANSAC, 3, mask);
+			//cout << M_inv.rows << M_inv.cols << endl;
+			//cout << M_inv.at<double>(0, 0) << " " << M_inv.at<double>(1, 0) << " " << M_inv.at<double>(2, 0) << " " << M_inv.at<double>(0, 1) << " " << M_inv.at<double>(1, 1) << " " << M_inv.at<double>(2, 1) << " " << M_inv.at<double>(0, 2) << " " << M_inv.at<double>(1, 2) << " " << M_inv.at<double>(2, 2) << endl;
+			/*if (dst_point_mi.size() != 4)continue;
+			M_inv = getPerspectiveTransform(dst_point_mi, src_point);*/
+
+			//Timer(timer4, "ransac");
+			//RANSACで使われた対応点のみ抽出
+			if (kakunin) {
+				vector<cv::DMatch> inlinerMatch;
+				for (size_t i = 0; i < mask.rows; ++i) {
+					uchar *inliner = mask.ptr<uchar>(i);
+					if (inliner[0] == 1) {
+						//cv::circle(frame, src_point[i], 15, Scalar(m * 80 % 255, 255, 255), 2);
+						//cv::line(frame, src_point[i], dst_point_mi[i], Scalar(0, 255, 255), 2);
+					}
+				}
+			}
+			vector<Mat> postit_area;
+			//box_3d = (cv::Mat_<double>(3, 1) << box_a_sorted[m].x, box_a_sorted[m].y, 1);
+			vector<vector<double>> data{ { 0, 0, 1 } ,{ double(postit_width), 0, 1 },
+			{ double(postit_width), double(postit_height), 1 },{ 0,double(postit_height),1 } };
+			vector<Mat> postit_area_before{ Mat(3,1,CV_64FC1,&data[0][0]), Mat(3,1,CV_64FC1,&data[1][0]), Mat(3,1,CV_64FC1,&data[2][0]),Mat(3,1,CV_64FC1,&data[3][0]) };
+			vector<Point2f> postit_points_each;
+			for (i = 0; i < postit_area_before.size(); i++) {
+				Mat postit_area_before_each = postit_area_before[i];
+				//print postit_area_before_each
+				Mat postit_area_after(3, 1, CV_64FC1);
+				if (M_inv.rows > 0) {
+					postit_area_after = M_inv * postit_area_before_each;
+					//miru(postit_area_after);
+					double* data = (double*)postit_area_after.data;
+					double* data1 = (double*)postit_area_before_each.data;
+					float x, y;
+					x = float(postit_area_after.at<double>(0, 0) / postit_area_after.at<double>(2, 0));
+					y = float(postit_area_after.at<double>(1, 0) / postit_area_after.at<double>(2, 0));
+					//cout << postit_area_after.at<double>(2, 0) << endl;
+					//cout << data1[0] << "," << data1[1] << "  " << postit_area_after.at<double>(0, 0) << "," << postit_area_after.at<double>(1, 0) << endl;
+					//cout << data1[0] << "," << data1[1] << "  "<< x << "," << y << endl;
+					postit_points_each.push_back(Point2f(x, y));
+
+				}
+			}
+			//Timer(timer4, "push");
+			if (kakunin) {
+				for (i = 0; i < src_point.size(); i++) {
+					if (i == 0) {
+						//cout << M_inv.at<double>(0, 0) << " " << M_inv.at<double>(1, 0) << " " << M_inv.at<double>(2, 0) << " " << M_inv.at<double>(0, 1) << " " << M_inv.at<double>(1, 1) << " " << M_inv.at<double>(2, 1) << " " << M_inv.at<double>(0, 2) << " " << M_inv.at<double>(1, 2) << " " << M_inv.at<double>(2, 2) << endl;
+					}
+					Mat postit_area_afters(3, 1, CV_64FC1);
+					vector<double> data{ dst_point_mi[i].x, dst_point_mi[i].y, 1 };
+					Mat dataMat(3, 1, CV_64FC1, &data[0]);
+					postit_area_afters = M_inv * dataMat;
+
+					double* datab = (double*)postit_area_afters.data;
+					double* data1 = (double*)dataMat.data;
+					int x, y;
+					x = int(postit_area_afters.at<double>(0, 0) / postit_area_afters.at<double>(2, 0));
+					y = int(postit_area_afters.at<double>(1, 0) / postit_area_afters.at<double>(2, 0));
+					//cout << data1[0] << "," << data1[1] << "  " << postit_area_afters.at<double>(0, 0) << "," << postit_area_afters.at<double>(1, 0) << endl;
+					//cout << data1[0] << ","<< data1[1] << "  " << x << "," << y << endl;
+					if (kakunin) {
+						cv::circle(frame, Point(x, y), 20, Scalar(255, 0, 0), 1);
+					}
+					//cv::line(frame, src_point[i], Point(int(postit_area_after.at<double>(0, 0)), int(postit_area_after.at<double>(1, 0))), Scalar(0, 255, 255), 3);
+				}
+			}
+			if (kakunin) {
+				vector<Point> points = vecPointToI(postit_points_each);
+				cv::polylines(frame, points, true, cv::Scalar(0, 0, 255), 2);
+				/*show_img = cv::Mat(cv::Size(frame.cols / 5, frame.rows / 5), CV_8UC3);
+				cv::resize(frame, show_img, show_img.size());
+				cv::imshow("show", show_img);
+				waitKey(1);*/
+			}
+			ptPostitPointsEach.push_back(postit_points_each);
 		}
-		
+		if (kakunin) {
+			imwrite("husen_mat.jpg", husen_mat);
+		}
+		Timer(prev_timer, "付箋位置推定");
+		for (m = 0; m < location_points_all.size(); m++) {
+			vector<Point2f> points = location_points_all[m];
+			vector<Point2f> src_point;
+			vector<Point2f> dst_point_mi;
+			vector<Point2f> dst_point_larger;
+			int i;
+			for (i = 0; i < points.size(); i++) {
+				if (points[i].x != 0 && points[i].y != 0) {
+					src_point.push_back(points[i]);
+					dst_point_mi.push_back(dst_points_original[i]);
+					dst_point_larger.push_back(dst_points_original_larger[i]);
+				}
+			}
+			int n;
+			vector<Point2f> postit_points_each = ptPostitPointsEach[m];
+			if (kakunin) {
+				vector<Point> points = vecPointToI(postit_points_each);
+				cv::polylines(frame, points, true, cv::Scalar(0, 0, 255), 2);
+			}
+
+			//id分析のため付箋の画像を記録
+			cv::Mat M = cv::findHomography(src_point, dst_point_larger, CV_RANSAC, 3);
+			Mat postit_result(postit_height + larger_buffer * 2, postit_width + larger_buffer * 2, CV_8UC3);
+			Mat postit_result_bin;
+			if (M.rows > 0) {
+				if (use_gpu) {
+					/*LARGE_INTEGER si;
+					QueryPerformanceCounter(&si);*/
+					cv::cuda::GpuMat gpudst(postit_height + larger_buffer * 2, postit_width + larger_buffer * 2, CV_8UC3);
+					cuda::warpPerspective(gpu_frame, gpudst, M, gpudst.size());
+					cv::cuda::GpuMat gpudst_grey, gpudst_bin;
+					cv::cuda::cvtColor(gpudst, gpudst_grey, CV_RGB2GRAY);
+					Mat postit_result_gray;
+					gpudst_grey.download(postit_result_gray);
+					cv::threshold(postit_result_gray, postit_result_bin, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+					if (kakunin) {
+						gpudst.download(postit_result);
+					}
+					//Timer(si, "gpu");
+				}
+				else {
+					//LARGE_INTEGER si;
+					//QueryPerformanceCounter(&si);
+					cv::warpPerspective(frame_original, postit_result, M, postit_result.size());
+					Mat postit_result_gray;
+					cv::cvtColor(postit_result, postit_result_gray, CV_RGB2GRAY);
+					extern vector<Mat> analyzing_images;
+					cv::threshold(postit_result_gray, postit_result_bin, 0.0, 255.0, CV_THRESH_BINARY | CV_THRESH_OTSU);
+					//Timer(si, "cpu");
+				}
+
+				//imshow("out", postit_result);
+				//imwrite("fusen" + to_string(m) + ".jpg", postit_result);
+				if (kakunin) {
+					/*cout << postit_result_bin.type();
+					namedWindow("out");
+					imshow("out", postit_result_bin);
+					namedWindow("outs");
+					imshow("outs", postit_result);
+					waitKey(1);*/
+				}
+
+				analyzing_images.push_back(postit_result_bin);
+				PostitPoint postitpoint;
+				postitpoint.id = -1;
+				postitpoint.points = postit_points_each;
+				int lc_id;
+				for (lc_id = 0; lc_id < 8; lc_id++) {
+					postitpoint.points.push_back(location_points_all[m][lc_id]);
+				}
+				postits->postitpoints.push_back(postitpoint);
+				moving++;
+			}
+		}
+		Timer(prev_timer, "射影変換");
 	}
 
-	Timer(iti_timer, "射影変換");
+
 
 
 	if (kakunin) {
@@ -1354,11 +1611,54 @@ void getPostits(PostitResult * postits, cv::Mat frame, int outer_size) {
 	}
 
 	zikken_output << "付箋発見数=" << count << endl;
-	if (use_id_moving) {
-		zikken_output << "付箋位置比較," << sum_idcheck << endl;
-		//cout << "付箋位置比較," << sum_idcheck << endl;
-	}
+	zikken_output << "動いている付箋" << moving << endl;
+	zikken_output << "動いていない付箋" << not_moving << endl;
+	cout << "付箋発見数=" << count << endl;
+	cout << "動いている付箋" << moving << endl;
+	cout << "動いていない付箋" << notmoving << endl;
 	return;
+}
+bool NearLC(vector<Point2f>points1, vector<Point2f>points2)
+{
+	double dict = 18;
+	Point2f gpoints1 = mean2f(&points1[0], 4, 0);
+	Point2f gpoints2 = mean2f(&points2[0], 4, 0);
+	if (dict < cv::norm(gpoints1 - gpoints2)) {
+		return false;
+	}
+	int size = points1.size();
+	int i, j;
+	for (i = 0; i < size; i++) {
+		double d = 0;
+		for (j = 0; j < size; j++) {
+			d += norm(points1[(i + j) % size] - points2[j]);
+		}
+		if (d < dict) {
+			return true;
+		}
+	}
+	return false;
+}
+bool NearID(vector<Point2f>points1, vector<Point2f>points2)
+{
+	double dict = 5;
+	int size = points2.size();
+	int i;
+	double d = 0;
+	int nlc = 0;
+	for (i = 0; i < size; i++) {
+		if (points1[i+4].x > 0.01 && points2[i].x > 0.01) {
+			d += cv::norm(points1[i + 4] - points2[i]);
+			nlc++;
+		}
+	}
+	d /= nlc;
+	if (d < dict && nlc >= 3) {
+		return true;
+	}
+	else {
+		return false;
+	}
 }
 
 int read_bit(Mat postit, int first_x, int first_y, bool horizon, int outer_size) {

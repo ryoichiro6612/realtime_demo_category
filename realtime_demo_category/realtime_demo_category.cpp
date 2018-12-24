@@ -10,13 +10,12 @@
 #include <thread>
 #include <mutex>
 
-#include <opencv2/core/core.hpp>  
+#include <opencv2/core.hpp>  
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/highgui.hpp>
-#include <opencv_lib.hpp>
 #include <opencv2/cudafilters.hpp>
 #include "schifra_galois_field.hpp"
 #include "schifra_galois_field_polynomial.hpp"
@@ -48,6 +47,10 @@ bool camera_heiretu;
 bool use_lc_moving;
 bool use_id_moving;
 bool flir_camera;
+bool idou;
+double yoko = 100;
+double naname = 125;
+double tate = 75;
 int husen_moved = 0;
 string vname;
 std::ofstream zikken_output;
@@ -73,6 +76,14 @@ vector<int>core_fusen(int, double, vector<vector<Point>>, int*);
 vector<int>neibor_fusen(int, double, vector<vector<Point>>, int*);
 double fusen_dict(vector<Point>, vector<Point>);
 double tentosen_dict(Point, Point, Point);
+void testAdaptive() {
+	Mat image = imread("frame0.jpg"),binImage;
+	int i;
+	for (i = 0; i < 100000; i++) {
+		adaptiveThresholdGPU(cuda::GpuMat(image), binImage, KERNEL, C_TEI);
+	}
+	return;
+}
 int gaiseki(Point p1, Point p2) {
 	return p1.x*p2.y - p1.y*p2.x;
 }
@@ -221,7 +232,7 @@ void testCamera(VideoCapture &cap) {
 	cv::namedWindow("test");
 	if (flir_camera) {
 		SetCamera(cam1, system1);
-		writer = VideoWriter("./datas/zikken121810	flir.wmv", CV_FOURCC('W', 'M', 'V', '1'), 30.0, Size(4000, 3000));
+		writer = VideoWriter("./datas/zikken121920flir.wmv", CV_FOURCC('W', 'M', 'V', '1'), 30.0, Size(4000, 3000));
 	}
 	else {
 		cap = VideoCapture(0);
@@ -247,7 +258,7 @@ void testCamera(VideoCapture &cap) {
 		}
 		QueryPerformanceCounter(&timer2);
 		cout << "capture:" << double(timer2.QuadPart - timer1.QuadPart)*1000.0 / freq.QuadPart << "ms" << endl;
-		//imshow("test", frame);
+		imshow("test", frame);
 		if (count >= 10) {
 			writer << frame;
 		}
@@ -304,7 +315,13 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 		//*usb camera use
 		//video reader and writer
 		//cap = VideoCapture("./datas/zikken1211.wmv");
-		cap = VideoCapture(vname);
+		if (idou) {
+			int tekitou = 1;
+		}
+		else {
+			cap = VideoCapture(vname);
+		}
+		
 		//cap = VideoCapture(0);
 		//cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1944);
 		//cap.set(CV_CAP_PROP_FRAME_WIDTH, 2592);
@@ -322,7 +339,7 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 		//namedWindow("video");
 		//imshow("video", frame);
 		//waitKey(1);
-		frame = imread("frame_0.jpg", 1);
+		frame = imread("frame_00.jpg", 1);
 	}
 
 
@@ -378,15 +395,15 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 
 	int newest_key = -1;
 	int newest_time = -1;
-
+	extern bool idou;
 	while (1) {
 		zikken_output << "progress  " << std::to_string(int(timer_count / fps) / 60) << ":" << std::to_string((timer_count / fps) % 60) << "\n";
 		cout << "progress  " << std::to_string(int(timer_count / fps) / 60) << ":" << std::to_string((timer_count / fps) % 60) << "\n";
 		LARGE_INTEGER prev_timer;
 		//if (timer_count == 100) break;
 
-		if (timer_count == NTEST) {
-			//break;
+		if (timer_count == NTEST && idou) {
+			break;
 		}
 		//*usb camera capture frame
 		QueryPerformanceCounter(&prev_timer);
@@ -408,25 +425,31 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 			}
 		}
 		else {
-			cap >> frame;
-			/*if (timer_count % 2 == 0) {
-				frame = imread("frame_0.jpg", 1);
+			if (idou) {
+				if (timer_count % 2 == 0) {
+				frame = imread("frame_00.jpg", 1);
+				}
+				else {
+					frame = imread(string("frame_0") + to_string(husen_moved) + ".jpg", 1);
+				}
 			}
 			else {
-				frame = imread(string("frame_") + to_string(husen_moved) + ".jpg", 1);
-			}*/
+				cap >> frame;
+			}	
 			//frame = imread("frame_0.jpg");
 		}
 		if (!frame.cols) {
-			//break;
+			break;
 		}
-		Timer(prev_timer, string("カメラからの画像取得"));
+		//Timer(prev_timer, string("カメラからの画像取得"));
+		QueryPerformanceCounter(&prev_timer);
 		//extract only desk_area
 	/*	Mat frame_deskarea(frame, Rect((int)desk_area[0].x, (int)desk_area[0].y,
 			(int)((desk_area[1] - desk_area[0]).x), (int)(desk_area[1] - desk_area[0]).y));*/
 
 		//Timer(prev_timer, "desk_area extract");
-
+		LARGE_INTEGER all;
+		QueryPerformanceCounter(&all);
 		PostitResult postits;
 		getPostits(&postits, frame, outer_size);
 
@@ -441,8 +464,13 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 		for (i = 0; i < analyzing_images.size(); i++) {
 			cv::dilate(analyzing_images[i], analyzing_images[i], kernel);
 		}
-		Timer(prev_timer, "dilate");
+		//Timer(prev_timer, "dilate");
+		QueryPerformanceCounter(&prev_timer);
+		std::mutex temp;
+//#pragma omp parallel for
 		for (i = 0; i < analyzing_images.size(); i++) {
+			//LARGE_INTEGER si;
+			//QueryPerformanceCounter(&si);
 			while (postits.postitpoints[idx].id >= 0) {
 				idx++;
 			}
@@ -455,15 +483,21 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 				//*/
 			}
 			vector<int> bit_array = readDots(analyzing_images[i], outer_size);
+			//Timer(si, "readdot");
 			int result_num = -1;
 			result_num = reedsolomonDecode(bit_array);
+			//Timer(si, "decode");
+			if (result_num < 0 && kakunin) {
+				imwrite("error" + to_string(i) + ".jpg", analyzing_images[i]);
+			}
 			postits.postitpoints[idx].id = result_num;
 		}
 		analyzing_images.clear();
 		//*
 		Timer(prev_timer, "ID認識");
 		if (use_id_moving) {
-			before_postits_points = postits.postitpoints;
+			//before_postits_points = postits.postitpoints;
+			before_postits_points.clear();
 		}
 		if (use_lc_moving) {
 			before_location_points = postits.location_points;
@@ -471,14 +505,16 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 		//*/
 		postit_points = postits.postitpoints;
 		int npostits = postit_points.size();
-		Timer(prev_timer, "前の情報を記録");
 		for (i = 0; i < npostits; i++) {
 			int result_num = postits.postitpoints[i].id;
 
 			//save postit image
 			if (result_num > 0) {
 				if (kakunin) {
-					cout << result_num << endl;
+					//cout << result_num << endl;
+				}
+				if (use_id_moving) {
+					before_postits_points.push_back(postits.postitpoints[i]);
 				}
 				// already exist
 				if (postit_saved[result_num].has_key) {
@@ -537,7 +573,9 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 				husen_points.push_back(Points);
 			}
 		}
+		Timer(prev_timer, "準備");
 		vector<vector<int>>C = dbscan_fusen(husen_points, 80);
+		Timer(prev_timer, "クラスタリング");
 
 		for (i = 0; i < C.size(); i++) {
 			for (j = 0; j < C[i].size(); j++) {
@@ -548,7 +586,8 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 
 			}
 		}
-		Timer(prev_timer, "クラスタリング");
+		Timer(prev_timer, "save");
+
 		//draw information
 		projection_img = Mat(projector_resolution[1], projector_resolution[0], CV_8UC3, Scalar(brightness, brightness, brightness));
 		for (key = 0; key < postit_saved.size(); key++) {
@@ -608,15 +647,31 @@ void realtimeDemoCategory(int argc, char * argv[]) {
 		int c;
 		c = cv::waitKey(1);
 		Timer(prev_timer, "画像出力");
-		Timer(prev_timer, "後処理");
+		//Timer(prev_timer, "後処理");
 		if (c == 27) {
 			break;
 		}
 		timer_count++;
+		//Timer(all, "all");
 	}
 	if (flir_camera) {
 		FinishCamera(pCam, system);
 	}
+}
+void TestSpeed() {
+	int i;
+	vector<Point> z = { Point(2, 5) };
+	int a[2] = { 1,5 };
+	LARGE_INTEGER mi;
+	QueryPerformanceCounter(&mi);
+	for (i = 0; i < 1000; i++) {
+		int x = z[0].x;
+	}
+	Timer(mi, "ss");
+	for (i = 0; i < 1000; i++) {
+		int x = a[0];
+	}
+	Timer(mi, "tt");
 }
 
 int main(int argc, char * argv[])
@@ -651,39 +706,82 @@ int main(int argc, char * argv[])
 	testCamera(testcap);
 	return 0;
 	//*/
-
-
+	/*
+	testAdaptive();
+	return 0;
+	//*/
+	TestSpeed();
 	int fidx;
 	string fname;
-	for (fidx = 5; fidx <= 5; fidx++) {
+	for (fidx = 5; fidx <= 5; fidx+=1) {
+		idou = false;
 		husen_moved = fidx;
-		vname = "./datas/zikken1217" + to_string(fidx) + "0flir.wmv";
-		vname = "./datas/zikken121750flir.wmv";
-		//vname = "./datas/zikken1211.wmv";
+		vname = "./datas/zikken1219" + to_string(fidx) + "0.wmv";
 		iti_heiretu = false;
 		id_heiretu = false;
-		use_gpu = true;
+		use_gpu = false;
 		camera_heiretu = false;
 		use_lc_moving = false;
 		use_id_moving = false;
-		flir_camera = true;
-		fname = string("./datas/csv/1217_3") + to_string(fidx) + ".log";
+		flir_camera = false;
+		fname = string("./datas/csv/1223_1") + to_string(fidx) + ".log";
 		zikken_output = ofstream(fname);
 		QueryPerformanceFrequency(&freq);
-		realtimeDemoCategory(argc, argv);
-		return 1;
-		iti_heiretu = false;
-		id_heiretu = false;
+		//realtimeDemoCategory(argc, argv);
+
+		iti_heiretu = true;
+		id_heiretu = true;
 		use_gpu = true;
 		camera_heiretu = false;
 		use_lc_moving = true;
 		use_id_moving = true;
-		flir_camera = true;
-		fname = string("./datas/csv/1217_4") + to_string(fidx) + ".log";
+		flir_camera = false;
+		fname = string("./datas/csv/1223_2") + to_string(fidx) + ".log";
 		zikken_output = ofstream(fname);
 		QueryPerformanceFrequency(&freq);
 		realtimeDemoCategory(argc, argv);
 	}
+	for (fidx = 2; fidx <= 10; fidx += 2) {
+		idou = true;
+		husen_moved = fidx;
+		vname = "./datas/zikken1219" + to_string(fidx) + "0.wmv";
+		iti_heiretu = false;
+		id_heiretu = false;
+		use_gpu = false;
+		camera_heiretu = false;
+		use_lc_moving = false;
+		use_id_moving = false;
+		flir_camera = false;
+		fname = string("./datas/csv/1223_3") + to_string(fidx) + ".log";
+		zikken_output = ofstream(fname);
+		QueryPerformanceFrequency(&freq);
+		//realtimeDemoCategory(argc, argv);
+
+		iti_heiretu = true;
+		id_heiretu = true;
+		use_gpu = true;
+		camera_heiretu = false;
+		use_lc_moving = true;
+		use_id_moving = true;
+		flir_camera = false;
+		fname = string("./datas/csv/1223_4") + to_string(fidx) + ".log";
+		zikken_output = ofstream(fname);
+		QueryPerformanceFrequency(&freq);
+		realtimeDemoCategory(argc, argv);
+	}
+	vname = "./datas/zikken121950.wmv";
+	idou = false;
+	iti_heiretu = true;
+	id_heiretu = true;
+	use_gpu = false;
+	camera_heiretu = false;
+	use_lc_moving = false;
+	use_id_moving = false;
+	flir_camera = false;
+	fname = string("./datas/csv/1223_5") + to_string(fidx) + ".log";
+	zikken_output = ofstream(fname);
+	QueryPerformanceFrequency(&freq);
+	realtimeDemoCategory(argc, argv);
 	return 0;
 
 	iti_heiretu = false;
@@ -1549,25 +1647,28 @@ int main(int argc, char * argv[])
 	//*/
 
 }
+//下ソロモン
+/* Finite Field Parameters */
+const std::size_t field_descriptor = 8;
+const std::size_t generator_polynomial_index = 0;
+const std::size_t generator_polynomial_root_count = 15;
 
-int reedsolomonDecode(vector<int> bit_array) {
-	/* Finite Field Parameters */
-	const std::size_t field_descriptor = 8;
-	const std::size_t generator_polynomial_index = 0;
-	const std::size_t generator_polynomial_root_count = 15;
+/* Reed Solomon Code Parameters */
+const std::size_t code_length = 15;
+const std::size_t fec_length = 14;
+const std::size_t data_length = code_length - fec_length;
+/* Instantiate Finite Field and Generator Polynomials */
+schifra::galois::field field(field_descriptor,
+	schifra::galois::primitive_polynomial_size05,
+	schifra::galois::primitive_polynomial05);
+schifra::galois::field_polynomial generator_polynomial(field);
 
-	/* Reed Solomon Code Parameters */
-	const std::size_t code_length = 15;
-	const std::size_t fec_length = 14;
-	const std::size_t data_length = code_length - fec_length;
-
-	/* Instantiate Finite Field and Generator Polynomials */
-	schifra::galois::field field(field_descriptor,
-		schifra::galois::primitive_polynomial_size05,
-		schifra::galois::primitive_polynomial05);
-
-	schifra::galois::field_polynomial generator_polynomial(field);
-
+/* Instantiate Encoder and Decoder (Codec) */
+typedef schifra::reed_solomon::shortened_encoder<code_length, fec_length, data_length> encoder_t;
+typedef schifra::reed_solomon::shortened_decoder<code_length, fec_length, data_length> decoder_t;
+encoder_t encoder(field, generator_polynomial);
+decoder_t decoder(field, generator_polynomial_index);
+int setreedsolomon() {
 	if (
 		!schifra::make_sequential_root_generator_polynomial(field,
 			generator_polynomial_index,
@@ -1578,15 +1679,8 @@ int reedsolomonDecode(vector<int> bit_array) {
 		std::cout << "Error - Failed to create sequential root generator!" << std::endl;
 		return -1;
 	}
-
-	/* Instantiate Encoder and Decoder (Codec) */
-	typedef schifra::reed_solomon::shortened_encoder<code_length, fec_length, data_length> encoder_t;
-	typedef schifra::reed_solomon::shortened_decoder<code_length, fec_length, data_length> decoder_t;
-
-	encoder_t encoder(field, generator_polynomial);
-	decoder_t decoder(field, generator_polynomial_index);
-
-
+}
+int reedsolomonDecode(vector<int> bit_array) {
 
 	/* Instantiate RS Block For Codec */
 	schifra::reed_solomon::block<code_length, fec_length> bit_array_block;
@@ -1869,6 +1963,5 @@ double tentosen_dict(Point q1, Point p1, Point p2) {
 	else {
 		return (double)norm(p2 - q1);
 	}
-
 }
 

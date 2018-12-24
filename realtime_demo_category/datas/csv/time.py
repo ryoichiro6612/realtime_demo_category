@@ -4,13 +4,14 @@ import csv_average as av
 import sys
 def time_write(name):
     csv_table = []
+    global row
     with open(name + ".log", "r") as f:
         count = 0
         col = 0
         csv_line = []
         for line in f:
             print(line)
-            if re.match("capture.+", line):
+            if re.match("progress.+", line):
                 col+=1
                 if len(csv_line) > 0:
                     print(csv_line)
@@ -27,10 +28,17 @@ def time_write(name):
                 if col == 1:
                     row.append(m[0])
                 string = str(m[0])
-                if float(m[1]) > 1:
-                    csv_line.append(float(m[1]))
+                #if float(m[1]) > 1:
+                csv_line.append(float(m[1]))
                 count += 1
         print(count)
+
+    row.append(u"合計")
+    for i, row in enumerate(csv_table):
+        sum = 0
+        for data in csv_table[i]:
+            sum += data
+        csv_table[i].append(sum)
     #for i in range(0, len(csv_table)):
     #    csv_table[i] = csv_table[i][2:]
     #    csv_table[i].pop(7)
